@@ -413,6 +413,20 @@ BOOLEAN kalP2PGetCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIdx)
 	return FALSE;
 }
 
+BOOLEAN kalP2PGetWepCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIdx)
+{
+	ASSERT(prGlueInfo);
+	ASSERT(prGlueInfo->prP2PInfo[ucRoleIdx]);
+
+	if (prGlueInfo->prP2PInfo[ucRoleIdx]->u4CipherPairwise == IW_AUTH_CIPHER_WEP40)
+		return TRUE;
+
+	if (prGlueInfo->prP2PInfo[ucRoleIdx]->u4CipherPairwise == IW_AUTH_CIPHER_WEP104)
+		return TRUE;
+
+	return FALSE;
+}
+
 BOOLEAN kalP2PGetCcmpCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIdx)
 {
 	ASSERT(prGlueInfo);
@@ -493,7 +507,7 @@ UINT_16 kalP2PCalWSC_IELen(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucType, IN UIN
 {
 	ASSERT(prGlueInfo);
 
-	ASSERT(ucType < 3);
+	ASSERT(ucType < 4);
 
 	return prGlueInfo->prP2PInfo[ucRoleIdx]->u2WSCIELen[ucType];
 }
@@ -514,7 +528,7 @@ VOID kalP2PGenWSC_IE(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucType, IN PUINT_8 p
 	P_GL_P2P_INFO_T prGlP2pInfo = (P_GL_P2P_INFO_T) NULL;
 
 	do {
-		if ((prGlueInfo == NULL) || (ucType >= 3) || (pucBuffer == NULL))
+		if ((prGlueInfo == NULL) || (ucType >= 4) || (pucBuffer == NULL))
 			break;
 
 		prGlP2pInfo = prGlueInfo->prP2PInfo[ucRoleIdx];
@@ -531,7 +545,7 @@ VOID kalP2PUpdateWSC_IE(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucType, IN PUINT_
 	P_GL_P2P_INFO_T prGlP2pInfo = (P_GL_P2P_INFO_T) NULL;
 
 	do {
-		if ((prGlueInfo == NULL) || (ucType >= 3) || ((u2BufferLength > 0) && (pucBuffer == NULL)))
+		if ((prGlueInfo == NULL) || (ucType >= 4) || ((u2BufferLength > 0) && (pucBuffer == NULL)))
 			break;
 
 		if (u2BufferLength > 400) {
@@ -935,6 +949,10 @@ kalP2PIndicateChannelExpired(IN P_GLUE_INFO_T prGlueInfo,
 		rRfChannelInfo.ucChannelNum = u4ChannelNum;
 
 		prIEEE80211ChnlStruct = kalP2pFuncGetChannelEntry(prGlueP2pInfo, &rRfChannelInfo);
+		if (!prIEEE80211ChnlStruct) {
+			DBGLOG(P2P, ERROR, "prIEEE80211ChnlStruct is NULL!\n");
+			break;
+		}
 
 		kalP2pFuncGetChannelType(eSco, &eChnlType);
 
@@ -984,7 +1002,7 @@ VOID kalP2PIndicateScanDone(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIndex, 
 			scanReportBss2Cfg80211(prGlueInfo->prAdapter, BSS_TYPE_P2P_DEVICE, NULL);
 
 			DBGLOG(INIT, INFO, "DBG:p2p_cfg_scan_done\n");
-			cfg80211_scan_done(prScanRequest, fgIsAbort);
+			kalCfg80211ScanDone(prScanRequest, fgIsAbort);
 		}
 		KAL_RELEASE_MUTEX(prGlueInfo->prAdapter, MUTEX_DEL_INF);
 
@@ -1130,14 +1148,14 @@ kalP2PIndicateRxMgmtFrame(IN P_GLUE_INFO_T prGlueInfo,
 		else
 			prNetdevice = prGlueP2pInfo->aprRoleHandler;
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0))
+#if (KERNEL_VERSION(3, 18, 0) <= CFG80211_VERSION_CODE)
 		cfg80211_rx_mgmt(prNetdevice->ieee80211_ptr,	/* struct net_device * dev, */
 				 i4Freq,
 				 RCPI_TO_dBm(nicRxGetRcpiValueFromRxv(RCPI_MODE_WF0, prSwRfb)),
 				 prSwRfb->pvHeader,
 				 prSwRfb->u2PacketLen,
 				 NL80211_RXMGMT_FLAG_ANSWERED);
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 12, 0))
+#elif (KERNEL_VERSION(3, 12, 0) <= CFG80211_VERSION_CODE)
 		cfg80211_rx_mgmt(prNetdevice->ieee80211_ptr,	/* struct net_device * dev, */
 				 i4Freq,
 				 RCPI_TO_dBm(nicRxGetRcpiValueFromRxv(RCPI_MODE_WF0, prSwRfb)),
@@ -1158,7 +1176,7 @@ kalP2PIndicateRxMgmtFrame(IN P_GLUE_INFO_T prGlueInfo,
 	} while (FALSE);
 
 }				/* kalP2PIndicateRxMgmtFrame */
-#if CFG_WPS_DISCONNECT || (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
+#if CFG_WPS_DISCONNECT || (KERNEL_VERSION(4, 4, 0) <= CFG80211_VERSION_CODE)
 VOID
 kalP2PGCIndicateConnectionStatus(IN P_GLUE_INFO_T prGlueInfo,
 				 IN UINT_8 ucRoleIndex,
@@ -1253,7 +1271,7 @@ kalP2PGOStationUpdate(IN P_GLUE_INFO_T prGlueInfo,
 
 			kalMemZero(&rStationInfo, sizeof(rStationInfo));
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 4, 0)
+#if KERNEL_VERSION(4, 0, 0) > CFG80211_VERSION_CODE
 			rStationInfo.filled = STATION_INFO_ASSOC_REQ_IES;
 #endif
 			rStationInfo.generation = ++prP2pGlueInfo->i4Generation;
@@ -1277,6 +1295,74 @@ kalP2PGOStationUpdate(IN P_GLUE_INFO_T prGlueInfo,
 	return;
 
 }				/* kalP2PGOStationUpdate */
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID kalP2PRddDetectUpdate(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIndex)
+{
+	DBGLOG(INIT, INFO, "Radar Detection event\n");
+
+	do {
+		if (prGlueInfo == NULL) {
+			ASSERT(FALSE);
+			break;
+		}
+
+		if (prGlueInfo->prP2PInfo[ucRoleIndex]->chandef == NULL) {
+			ASSERT(FALSE);
+			break;
+		}
+
+		/* cac start disable for next cac slot if enable in dfs channel */
+		prGlueInfo->prP2PInfo[ucRoleIndex]->prWdev->cac_started = FALSE;
+		DBGLOG(INIT, INFO, "kalP2PRddDetectUpdate: Update to OS\n");
+		cfg80211_radar_event(prGlueInfo->prP2PInfo[ucRoleIndex]->prWdev->wiphy,
+				prGlueInfo->prP2PInfo[ucRoleIndex]->chandef, GFP_KERNEL);
+		DBGLOG(INIT, INFO, "kalP2PRddDetectUpdate: Update to OS Done\n");
+
+		netif_carrier_off(prGlueInfo->prP2PInfo[ucRoleIndex]->prDevHandler);
+		netif_tx_stop_all_queues(prGlueInfo->prP2PInfo[ucRoleIndex]->prDevHandler);
+
+		if (prGlueInfo->prP2PInfo[ucRoleIndex]->chandef->chan)
+			cnmMemFree(prGlueInfo->prAdapter, prGlueInfo->prP2PInfo[ucRoleIndex]->chandef->chan);
+
+		prGlueInfo->prP2PInfo[ucRoleIndex]->chandef->chan = NULL;
+
+		if (prGlueInfo->prP2PInfo[ucRoleIndex]->chandef)
+			cnmMemFree(prGlueInfo->prAdapter, prGlueInfo->prP2PInfo[ucRoleIndex]->chandef);
+
+		prGlueInfo->prP2PInfo[ucRoleIndex]->chandef = NULL;
+
+	} while (FALSE);
+
+}				/* kalP2PRddDetectUpdate */
+
+VOID kalP2PCacFinishedUpdate(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIndex)
+{
+	DBGLOG(INIT, INFO, "CAC Finished event\n");
+
+	do {
+		if (prGlueInfo == NULL)
+			ASSERT(FALSE);
+
+		if (prGlueInfo->prP2PInfo[ucRoleIndex]->chandef == NULL) {
+			ASSERT(FALSE);
+			break;
+		}
+
+		DBGLOG(INIT, INFO, "kalP2PCacFinishedUpdate: Update to OS\n");
+#if KERNEL_VERSION(3, 14, 0) <= CFG80211_VERSION_CODE
+		cfg80211_cac_event(prGlueInfo->prP2PInfo[ucRoleIndex]->prDevHandler,
+				prGlueInfo->prP2PInfo[ucRoleIndex]->chandef, NL80211_RADAR_CAC_FINISHED, GFP_KERNEL);
+#else
+		cfg80211_cac_event(prGlueInfo->prP2PInfo[ucRoleIndex]->prDevHandler,
+				NL80211_RADAR_CAC_FINISHED, GFP_KERNEL);
+#endif
+		DBGLOG(INIT, INFO, "kalP2PCacFinishedUpdate: Update to OS Done\n");
+
+	} while (FALSE);
+
+}				/* kalP2PRddDetectUpdate */
+#endif
 
 BOOLEAN kalP2pFuncGetChannelType(IN ENUM_CHNL_EXT_T rChnlSco, OUT enum nl80211_channel_type *channel_type)
 {
@@ -1312,21 +1398,24 @@ BOOLEAN kalP2pFuncGetChannelType(IN ENUM_CHNL_EXT_T rChnlSco, OUT enum nl80211_c
 struct ieee80211_channel *kalP2pFuncGetChannelEntry(IN P_GL_P2P_INFO_T prP2pInfo, IN P_RF_CHANNEL_INFO_T prChannelInfo)
 {
 	struct ieee80211_channel *prTargetChannelEntry = (struct ieee80211_channel *)NULL;
+	struct wiphy *wiphy = (struct wiphy *) NULL;
 	UINT_32 u4TblSize = 0, u4Idx = 0;
-	struct wiphy *wiphy = prP2pInfo->prWdev->wiphy;
+
+	if ((prP2pInfo == NULL) || (prChannelInfo == NULL))
+		return NULL;
+
+	wiphy = prP2pInfo->prWdev->wiphy;
 
 	do {
-		if ((prP2pInfo == NULL) || (prChannelInfo == NULL))
-			break;
 
 		switch (prChannelInfo->eBand) {
 		case BAND_2G4:
-			prTargetChannelEntry = wiphy->bands[IEEE80211_BAND_2GHZ]->channels;
-			u4TblSize = wiphy->bands[IEEE80211_BAND_2GHZ]->n_channels;
+			prTargetChannelEntry = wiphy->bands[KAL_BAND_2GHZ]->channels;
+			u4TblSize = wiphy->bands[KAL_BAND_2GHZ]->n_channels;
 			break;
 		case BAND_5G:
-			prTargetChannelEntry = wiphy->bands[IEEE80211_BAND_5GHZ]->channels;
-			u4TblSize = wiphy->bands[IEEE80211_BAND_5GHZ]->n_channels;
+			prTargetChannelEntry = wiphy->bands[KAL_BAND_5GHZ]->channels;
+			u4TblSize = wiphy->bands[KAL_BAND_5GHZ]->n_channels;
 			break;
 		default:
 			break;

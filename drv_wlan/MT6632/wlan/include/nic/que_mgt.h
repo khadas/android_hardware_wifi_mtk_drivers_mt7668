@@ -253,12 +253,12 @@ typedef enum _ENUM_BA_RESET_SEL_T {
 
 #endif
 
-#define QM_DEQUE_PERCENT_VHT80_NSS1	23		/* BW80 NSS1 rate: MCS9 433 Mbps */
-#define QM_DEQUE_PERCENT_VHT40_NSS1	10		/* BW40 NSS1 Max rate: 200 Mbps */
-#define QM_DEQUE_PERCENT_VHT20_NSS1	5		/* BW20 NSS1 Max rate: 86.7Mbps */
+#define QM_DEQUE_PERCENT_VHT80_NSS1	75		/* BW80 NSS1 rate: MCS9 433 Mbps */
+#define QM_DEQUE_PERCENT_VHT40_NSS1	35		/* BW40 NSS1 Max rate: 200 Mbps */
+#define QM_DEQUE_PERCENT_VHT20_NSS1	15		/* BW20 NSS1 Max rate: 86.7Mbps */
 
-#define QM_DEQUE_PERCENT_HT40_NSS1	10		/* BW40 NSS1 Max rate: 150 Mbps (MCS9 200Mbps)*/
-#define QM_DEQUE_PERCENT_HT20_NSS1	5		/* BW20 NSS1 Max rate: 72.2Mbps (MCS8 86.7Mbps)*/
+#define QM_DEQUE_PERCENT_HT40_NSS1	25		/* BW40 NSS1 Max rate: 150 Mbps (MCS9 200Mbps)*/
+#define QM_DEQUE_PERCENT_HT20_NSS1	12		/* BW20 NSS1 Max rate: 72.2Mbps (MCS8 86.7Mbps)*/
 
 /*******************************************************************************
  *                             D A T A   T Y P E S
@@ -439,6 +439,7 @@ typedef struct _QUE_MGT_T {	/* Queue Management Control Info */
 	UINT_32 u4MaxForwardBufferCount;
 
 	OS_SYSTIME rLastTxPktDumpTime;
+	BOOLEAN fgIsTxResrouceControlEn;
 } QUE_MGT_T, *P_QUE_MGT_T;
 
 typedef struct _EVENT_RX_ADDBA_T {
@@ -611,7 +612,8 @@ typedef struct _CMD_UPDATE_WMM_PARMS_T {
 	AC_QUE_PARMS_T arACQueParms[AC_NUM];
 	UINT_8 ucBssIndex;
 	UINT_8 fgIsQBSS;
-	UINT_8 aucReserved[2];
+	UINT_8 ucWmmSet;
+	UINT_8 aucReserved;
 } CMD_UPDATE_WMM_PARMS_T, *P_CMD_UPDATE_WMM_PARMS_T;
 
 typedef struct _CMD_TX_AMPDU_T {
@@ -758,7 +760,7 @@ typedef enum _ENUM_BA_ENTRY_STATUS_T {
 /* Queue Management and STA_REC Initialization                                */
 /*----------------------------------------------------------------------------*/
 
-VOID qmInit(IN P_ADAPTER_T prAdapter);
+VOID qmInit(IN P_ADAPTER_T prAdapter, IN BOOLEAN isTxResrouceControlEn);
 
 #if QM_TEST_MODE
 VOID qmTestCases(IN P_ADAPTER_T prAdapter);
@@ -832,6 +834,10 @@ UINT_32 gmGetDequeueQuota(
 VOID qmInitRxQueues(IN P_ADAPTER_T prAdapter);
 
 P_SW_RFB_T qmFlushRxQueues(IN P_ADAPTER_T prAdapter);
+
+P_QUE_T qmDetermineStaTxQueue(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo, OUT PUINT_8 pucTC);
+
+VOID qmSetTxPacketDescTemplate(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo);
 
 P_SW_RFB_T qmHandleRxPackets(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfbListHead);
 
@@ -946,6 +952,12 @@ VOID mqmHandleBaActionFrame(P_ADAPTER_T prAdapter, P_SW_RFB_T prSwRfb);
 #endif
 
 VOID qmResetTcControlResource(IN P_ADAPTER_T prAdapter);
+
+#if CFG_SUPPORT_REPLAY_DETECTION
+BOOLEAN qmHandleRxReplay(P_ADAPTER_T prAdapter, P_SW_RFB_T prSwRfb);
+BOOLEAN qmRxDetectReplay(PUINT_8 pucPNS, PUINT_8 pucPNT);
+#endif
+
 /*******************************************************************************
  *                              F U N C T I O N S
  ********************************************************************************

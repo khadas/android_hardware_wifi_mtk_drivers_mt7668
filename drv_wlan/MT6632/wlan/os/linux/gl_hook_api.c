@@ -79,7 +79,7 @@
 #include "gl_cfg80211.h"
 #include "gl_ate_agent.h"
 #include "gl_qa_agent.h"
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+#if KERNEL_VERSION(3, 8, 0) <= CFG80211_VERSION_CODE
 #include <uapi/linux/nl80211.h>
 #endif
 /*******************************************************************************
@@ -501,7 +501,7 @@ INT_32 MT_ATESetSystemBW(struct net_device *prNetDev, UINT_32 u4BW)
 	INT_32 i4Status;
 	P_GLUE_INFO_T prGlueInfo = NULL;
 	PARAM_MTK_WIFI_TEST_STRUCT_T rRfATInfo;
-	UINT_32 u4BWMapping;
+	UINT_32 u4BWMapping = 0;
 
 	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
 
@@ -760,7 +760,7 @@ INT_32 MT_ATESetPerPacketBW(struct net_device *prNetDev, UINT_32 u4BW)
 	INT_32 i4Status;
 	P_GLUE_INFO_T prGlueInfo = NULL;
 	PARAM_MTK_WIFI_TEST_STRUCT_T rRfATInfo;
-	UINT_32 u4BWMapping;
+	UINT_32 u4BWMapping = 0;
 
 	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
 
@@ -2505,6 +2505,8 @@ INT_32 MT_ATEWriteEfuse(struct net_device *prNetDev, UINT_16 u2Offset, UINT_16 u
 	kalMemSet(&rAccessEfuseInfoWrite, 0, sizeof(PARAM_CUSTOM_ACCESS_EFUSE_T));
 	u4Index = u2Offset % EFUSE_BLOCK_SIZE;
 
+	if (u4Index > EFUSE_BLOCK_SIZE - 2)
+		return -EINVAL;
 
 	prGlueInfo->prAdapter->aucEepromVaule[u4Index] = u2Content;
 	prGlueInfo->prAdapter->aucEepromVaule[u4Index+1] = u2Content >> 8 & 0xff;
@@ -2572,7 +2574,84 @@ INT_32 MT_ATESetTxTargetPower(struct net_device *prNetDev, UINT_8 ucTxTargetPowe
 	return i4Status;
 }
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief  Hook API for Set Rdd Report.
+*
+* \param[in] prNetDev		 Pointer to the Net Device
+* \param[in] ucDbdcIdx         Dbdc Index
+* \param[out] None
+*
+* \retval 0				On success.
+* \retval -EFAULT			If kalIoctl return nonzero.
+* \retval -EINVAL			If invalid argument.
+*/
+/*----------------------------------------------------------------------------*/
+INT_32 MT_ATESetRddReport(struct net_device *prNetDev, UINT_8 ucDbdcIdx)
+{
+	UINT_32 u4BufLen = 0;
+	PARAM_CUSTOM_SET_RDD_REPORT_T rSetRddReport;
+	P_GLUE_INFO_T prGlueInfo = NULL;
+	WLAN_STATUS i4Status = WLAN_STATUS_SUCCESS;
 
+	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	kalMemSet(&rSetRddReport, 0, sizeof(PARAM_CUSTOM_SET_RDD_REPORT_T));
+
+	/* Set Rdd Report */
+	DBGLOG(INIT, INFO, "MT6632 : QA_AGENT Set RDD Report - Band: %d\n", ucDbdcIdx);
+	rSetRddReport.ucDbdcIdx = ucDbdcIdx;
+
+	i4Status = kalIoctl(prGlueInfo,
+				wlanoidQuerySetRddReport,
+				&rSetRddReport,
+				sizeof(PARAM_CUSTOM_SET_RDD_REPORT_T), FALSE, FALSE, TRUE, &u4BufLen);
+
+	if (i4Status != WLAN_STATUS_SUCCESS)
+		return -EFAULT;
+
+	return i4Status;
+}
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief  Hook API for Set Radar Detect Mode.
+*
+* \param[in] prNetDev				 Pointer to the Net Device
+* \param[in] ucRadarDetectMode         Radar Detect Mode
+* \param[out] None
+*
+* \retval 0				On success.
+* \retval -EFAULT			If kalIoctl return nonzero.
+* \retval -EINVAL			If invalid argument.
+*/
+/*----------------------------------------------------------------------------*/
+INT_32 MT_ATESetRadarDetectMode(struct net_device *prNetDev, UINT_8 ucRadarDetectMode)
+{
+	UINT_32 u4BufLen = 0;
+	struct PARAM_CUSTOM_SET_RADAR_DETECT_MODE rSetRadarDetectMode;
+	P_GLUE_INFO_T prGlueInfo = NULL;
+	WLAN_STATUS i4Status = WLAN_STATUS_SUCCESS;
+
+	prGlueInfo = *((P_GLUE_INFO_T *) netdev_priv(prNetDev));
+	kalMemSet(&rSetRadarDetectMode, 0, sizeof(struct PARAM_CUSTOM_SET_RADAR_DETECT_MODE));
+
+	/* Set Rdd Report */
+	DBGLOG(INIT, INFO, "MT6632 : QA_AGENT Set Radar Detect Mode: %d\n", ucRadarDetectMode);
+	rSetRadarDetectMode.ucRadarDetectMode = ucRadarDetectMode;
+
+	i4Status = kalIoctl(prGlueInfo,
+				wlanoidQuerySetRadarDetectMode,
+				&rSetRadarDetectMode,
+				sizeof(struct PARAM_CUSTOM_SET_RADAR_DETECT_MODE), FALSE, FALSE, TRUE, &u4BufLen);
+
+	if (i4Status != WLAN_STATUS_SUCCESS)
+		return -EFAULT;
+
+	return i4Status;
+}
+
+#endif
 
 #if CFG_SUPPORT_TX_BF
 INT_32 TxBfProfileTag_InValid(struct net_device *prNetDev, P_PFMU_PROFILE_TAG1 prPfmuTag1, UINT_8 ucInValid)

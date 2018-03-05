@@ -356,8 +356,9 @@
 #endif
 
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
-#define MAX_SUPPORTED_CH_COUNT (53) /*ARRAY_SIZE(mtk_2ghz_channels) + ARRAY_SIZE(mtk_5ghz_channels)*/
+#define MAX_SUPPORTED_CH_COUNT MAX_CHN_NUM
 #define REG_RULE_LIGHT(start, end, bw, reg_flags) REG_RULE(start, end, bw, 0, 0, reg_flags)
+#define TX_PWR_LIMIT_CMD_CH_NUM_THRESHOLD 32
 #endif
 /*******************************************************************************
 *                             D A T A   T Y P E S
@@ -472,6 +473,9 @@ typedef struct _DOMAIN_INFO_ENTRY {
 #define ELEMENT_PREFIX (0xffff)
 #define VERSION (0x00000001)
 #define SIZE_OF_VERSION 4
+#define WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE 204800
+#define WLAN_TX_PWR_LIMIT_FILE_NAME "TxPwrLimit_MT76x8.dat"
+
 
 struct tx_pwr_element {
 	UINT_16 prefix;
@@ -620,6 +624,7 @@ enum regd_state {
 	REGD_STATE_SET_WW_CORE,
 	REGD_STATE_SET_COUNTRY_USER,
 	REGD_STATE_SET_COUNTRY_DRIVER,
+	REGD_STATE_SET_COUNTRY_IE,
 	REGD_STATE_INVALID
 };
 
@@ -632,11 +637,14 @@ typedef struct mtk_regd_control_t {
 	BOOLEAN isEfuseCountryCodeUsed;
 	enum regd_state state;
 	u32 alpha2;
+	u32 tmp_alpha2; /*store country code set by iwpriv "country XX"*/
 	u32 flag; /*enum regd_control_flag*/
 	struct wiphy *pRefWiphy; /*log the referenced wiphy*/
+	P_GLUE_INFO_T pGlueInfo; /*wlan GlueInfo*/
 	u8 n_channel_active_2g;
 	u8 n_channel_active_5g;
 	struct channel channels[MAX_SUPPORTED_CH_COUNT];
+	enum nl80211_dfs_regions dfs_region;
 } mtk_regd_control;
 
 #if (CFG_SUPPORT_SINGLE_SKU_LOCAL_DB == 1)
@@ -714,12 +722,11 @@ extern struct ieee80211_supported_band mtk_band_5ghz;
 
 BOOLEAN rlmDomainIsCtrlStateEqualTo(enum regd_state state);
 BOOLEAN rlmDomainIsUsingLocalRegDomainDataBase(void);
-u32 rlmDomainGetCountryCode(void);
 enum regd_state rlmDomainStateTransition(enum regd_state request_state, struct regulatory_request *pRequest);
 void rlmDomainSetCountryCode(char *alpha2, u8 size_of_alpha2);
+void rlmDomainSetDfsRegion(enum nl80211_dfs_regions dfs_region);
+enum nl80211_dfs_regions rlmDomainGetDfsRegion(void);
 void rlmDomainResetCtrlInfo(void);
-u32 rlmDomainSearchCountrySection(u32 country_code, const struct firmware *file);
-BOOLEAN rlmDomainIsTheEndOfCountrySection(u32 start_offset, const struct firmware *file);
 void rlmDomainAddActiveChannel(u8 band);
 u8 rlmDomainGetActiveChannelCount(u8 band);
 void rlmDomainParsingChannel(IN struct wiphy *pWiphy);
@@ -732,6 +739,9 @@ void rlmDomainSetRefWiphy(struct wiphy *pWiphy);
 enum regd_state rlmDomainGetCtrlState(void);
 bool rlmDomainIsSameCountryCode(char *alpha2, u8 size_of_alpha2);
 const struct ieee80211_regdomain *rlmDomainSearchRegdomainFromLocalDataBase(char *alpha2);
+P_GLUE_INFO_T rlmDomainGetGlueInfo(void);
+bool rlmDomainIsEfuseUsed(void);
+
 
 #if (CFG_SUPPORT_SINGLE_SKU_LOCAL_DB == 1)
 extern const struct mtk_regdomain *g_prRegRuleTable[];
@@ -739,6 +749,7 @@ extern const struct mtk_regdomain *g_prRegRuleTable[];
 
 #endif
 
+const struct ieee80211_regdomain *rlmDomainGetLocalDefaultRegd(void);
 void rlmDomainSendInfoToFirmware(IN P_ADAPTER_T prAdapter);
 WLAN_STATUS rlmDomainExtractSingleSkuInfoFromFirmware(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucEventBuf);
 BOOLEAN regd_is_single_sku_en(void);
@@ -747,6 +758,9 @@ ENUM_CHNL_EXT_T rlmSelectSecondaryChannelType(P_ADAPTER_T prAdapter, ENUM_BAND_T
 extern void mtk_reg_notify(IN struct wiphy *pWiphy,
 			   IN struct regulatory_request *pRequest);
 void rlmDomainOidSetCountry(IN P_ADAPTER_T prAdapter, char *country, u8 size_of_country);
+u32 rlmDomainGetCountryCode(void);
+u32 rlmDomainGetTempCountryCode(void);
+void rlmDomainAssert(BOOLEAN cond);
 
 /*******************************************************************************
 *                              F U N C T I O N S

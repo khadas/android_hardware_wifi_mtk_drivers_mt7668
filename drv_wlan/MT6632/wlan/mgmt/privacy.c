@@ -598,8 +598,8 @@ BOOLEAN secIsProtectedFrame(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsdu, I
 
 #if CFG_SUPPORT_802_11W
 	if (prMsdu->ucPacketType == TX_PACKET_TYPE_MGMT) {
-		BOOL fgRobustActionWithProtect = FALSE;
 #if 0				/* Decide by Compose module */
+		BOOL fgRobustActionWithProtect = FALSE;
 		P_BSS_INFO_T prBssInfo;
 
 		if (prStaRec) {
@@ -609,13 +609,11 @@ BOOLEAN secIsProtectedFrame(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsdu, I
 			    prAdapter->rWifiVar.rAisSpecificBssInfo.fgMgmtProtection /* Use MFP */) {
 
 				fgRobustActionWithProtect = TRUE;
+				return TRUE; /* AIS & Robust action frame */
 			}
 		}
 #endif
-		if (prStaRec && fgRobustActionWithProtect /* AIS & Robust action frame */)
-			return TRUE;
-		else
-			return FALSE;
+		return FALSE;
 	}
 #else
 	if (prMsdu->ucPacketType == TX_PACKET_TYPE_MGMT)
@@ -762,7 +760,7 @@ VOID secPrivacyFreeForEntry(IN P_ADAPTER_T prAdapter, IN UINT_8 ucEntry)
 
 	ASSERT(prAdapter);
 
-	if (ucEntry > WTBL_SIZE)
+	if (ucEntry >= WTBL_SIZE)
 		return;
 
 	DBGLOG(RSN, INFO, "secPrivacyFreeForEntry %d", ucEntry);
@@ -897,7 +895,7 @@ secPrivacySeekForBcEntry(IN P_ADAPTER_T prAdapter,
 	UINT_8 i;
 	BOOLEAN fgCheckKeyId = TRUE;
 	P_WLAN_TABLE_T prWtbl;
-	/* P_BSS_INFO_T            prBSSInfo = GET_BSS_INFO_BY_INDEX(prAdapter,ucBssIndex); */
+	P_BSS_INFO_T prBSSInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
 
 	prWtbl = prAdapter->rWifiVar.arWtbl;
 	ASSERT(prAdapter);
@@ -911,10 +909,15 @@ secPrivacySeekForBcEntry(IN P_ADAPTER_T prAdapter,
 	if (ucKeyId == 0xFF || ucAlg == CIPHER_SUITE_BIP)
 		fgCheckKeyId = FALSE;
 
+	if (prBSSInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT)
+		fgCheckKeyId = FALSE;
+
 	ucStartIDX = 0;
 	ucMaxIDX = NIC_TX_DEFAULT_WLAN_INDEX - 1;
 
 	DBGLOG(INIT, INFO, "secPrivacySeekForBcEntry\n");
+	DBGLOG(INIT, INFO, "OpMode:%d, NetworkType:%d, CheckKeyId:%d\n",
+		prBSSInfo->eCurrentOPMode, prBSSInfo->eNetworkType, fgCheckKeyId);
 
 	for (i = ucStartIDX; i <= ucMaxIDX; i++) {
 
@@ -952,17 +955,21 @@ secPrivacySeekForBcEntry(IN P_ADAPTER_T prAdapter,
 			prWtbl[ucEntry].ucPairwise = 0;
 			kalMemCopy(prWtbl[ucEntry].aucMacAddr, pucAddr, MAC_ADDR_LEN);
 			prWtbl[ucEntry].ucStaIndex = ucStaIdx;
+		} else {
+			/* BIP no need to dump secCheckWTBLAssign */
+			return ucEntry;
 		}
+
 		DBGLOG(RSN, INFO,
 		       "[Wlan index] BSS#%d keyid#%d P=%d use WlanIndex#%d STAIdx=%d " MACSTR
 		       "\n", ucBssIndex, ucKeyId, prWtbl[ucEntry].ucPairwise, ucEntry, ucStaIdx, MAC2STR(pucAddr));
 
-#if 1				/* DBG */
+		/* DBG */
 		secCheckWTBLAssign(prAdapter);
-#endif
+
 	} else {
 		secCheckWTBLAssign(prAdapter);
-		DBGLOG(RSN, INFO, "[Wlan index] No more wlan entry available!!!!\n");
+		DBGLOG(RSN, ERROR, "[Wlan index] No more wlan entry available!!!!\n");
 	}
 
 	return ucEntry;
@@ -1098,7 +1105,7 @@ void secPrivacyDumpWTBL(IN P_ADAPTER_T prAdapter)
 
 	DBGLOG(RSN, INFO, "The Wlan index\n");
 
-	for (i = 0; i <= WTBL_SIZE; i++) {
+	for (i = 0; i < WTBL_SIZE; i++) {
 		if (prWtbl[i].ucUsed)
 			DBGLOG(RSN, INFO,
 				"#%d Used=%d  BSSIdx=%d keyid=%d P=%d STA=%d Addr=" MACSTR "\n", i,

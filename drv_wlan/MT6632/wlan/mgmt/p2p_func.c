@@ -78,6 +78,41 @@ APPEND_VAR_IE_ENTRY_T txProbeRspIETable[] = {
 
 };
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+BOOLEAN g_fgManualCac = FALSE;
+UINT_32 g_u4DriverCacTime;
+UINT_32 g_u4CacStartBootTime;
+UINT_8 g_ucRadarDetectMode = FALSE;
+struct P2P_RADAR_INFO g_rP2pRadarInfo;
+UINT_8 g_ucDfsState = DFS_STATE_INACTIVE;
+static PUINT_8 apucDfsState[DFS_STATE_NUM] = {
+	(PUINT_8) DISP_STRING("DFS_STATE_INACTIVE"),
+	(PUINT_8) DISP_STRING("DFS_STATE_CHECKING"),
+	(PUINT_8) DISP_STRING("DFS_STATE_ACTIVE"),
+	(PUINT_8) DISP_STRING("DFS_STATE_DETECTED")
+};
+
+PUINT_8 apucW53RadarType[3] = {
+	(PUINT_8) DISP_STRING("Unknown Type"),
+	(PUINT_8) DISP_STRING("Type 1 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 2 (short pulse)")
+};
+PUINT_8 apucW56RadarType[12] = {
+	(PUINT_8) DISP_STRING("Unknown Type"),
+	(PUINT_8) DISP_STRING("Type 1 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 2 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 3 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 4 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 5 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 6 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 7 (long pulse)"),
+	(PUINT_8) DISP_STRING("Type 8 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 4 or Type 5 or Type 6 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 5 or Type 6 or Type 8 (short pulse)"),
+	(PUINT_8) DISP_STRING("Type 5 or Type 6 (short pulse)")
+};
+#endif
+
 static VOID
 p2pFuncParseBeaconVenderId(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucIE,
 			   IN P_P2P_SPECIFIC_BSS_INFO_T prP2pSpecificBssInfo, IN UINT_8 ucRoleIndex);
@@ -582,7 +617,11 @@ VOID p2pFuncStopComplete(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prP2pBssInfo)
 		nicUpdateBss(prAdapter, prP2pBssInfo->ucBssIndex);
 
 		/* Reset current OPMode */
-		prP2pBssInfo->eCurrentOPMode = OP_MODE_INFRASTRUCTURE;
+		/* 20170628, remove reset opmode, otherwise we cannot free P2P beacon buffer */
+		/* prP2pBssInfo->eCurrentOPMode = OP_MODE_INFRASTRUCTURE; */
+
+		/* Point StaRecOfAP to NULL when GC role stop Complete */
+		prP2pBssInfo->prStaRecOfAP = NULL;
 	} while (FALSE);
 
 }				/* p2pFuncStopComplete */
@@ -601,6 +640,22 @@ p2pFuncStartGO(IN P_ADAPTER_T prAdapter,
 	       IN P_BSS_INFO_T prBssInfo,
 	       IN P_P2P_CONNECTION_REQ_INFO_T prP2pConnReqInfo, IN P_P2P_CHNL_REQ_INFO_T prP2pChnlReqInfo)
 {
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	P_CMD_RDD_ON_OFF_CTRL_T prCmdRddOnOffCtrl;
+#endif
+
+#ifdef CFG_SUPPORT_P2P_OPEN_SECURITY
+		BOOLEAN fgIsOpenP2P = TRUE;
+#else
+		BOOLEAN fgIsOpenP2P = FALSE;
+#endif
+
+#ifdef CFG_SUPPORT_P2P_PROBERESP_RATE1M
+		BOOLEAN fgIs1MProbeResp = TRUE;
+#else
+		BOOLEAN fgIs1MProbeResp = FALSE;
+#endif
+
 	do {
 		ASSERT_BREAK((prAdapter != NULL) && (prBssInfo != NULL));
 
@@ -611,6 +666,31 @@ p2pFuncStartGO(IN P_ADAPTER_T prAdapter,
 		}
 
 		DBGLOG(P2P, TRACE, "p2pFuncStartGO:\n");
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+		prCmdRddOnOffCtrl = (P_CMD_RDD_ON_OFF_CTRL_T) cnmMemAlloc(prAdapter, RAM_TYPE_MSG,
+						sizeof(*prCmdRddOnOffCtrl));
+
+		if (prCmdRddOnOffCtrl == NULL) {
+			DBGLOG(P2P, ERROR, "Allocate memory for prCmdRddOnOffCtrl failed.");
+			return;
+		}
+
+		prCmdRddOnOffCtrl->ucDfsCtrl = RDD_START_TXQ;
+
+		DBGLOG(P2P, INFO, "p2pFuncStartGO: Start TXQ - DFS ctrl: %.d\n", prCmdRddOnOffCtrl->ucDfsCtrl);
+
+		wlanSendSetQueryCmd(prAdapter,
+					CMD_ID_RDD_ON_OFF_CTRL,
+					TRUE,
+					FALSE,
+					FALSE,
+					NULL,
+					NULL,
+					sizeof(*prCmdRddOnOffCtrl), (PUINT_8) prCmdRddOnOffCtrl, NULL, 0);
+
+		cnmMemFree(prAdapter, prCmdRddOnOffCtrl);
+#endif
 
 		/* Re-start AP mode.  */
 		p2pFuncSwitchOPMode(prAdapter, prBssInfo, prBssInfo->eIntendOPMode, FALSE);
@@ -639,7 +719,8 @@ p2pFuncStartGO(IN P_ADAPTER_T prAdapter,
 			/* Depend on eBand */
 			prBssInfo->ucPhyTypeSet = (prAdapter->rWifiVar.ucAvailablePhyTypeSet & PHY_TYPE_SET_802_11AN);
 			prBssInfo->ucConfigAdHocAPMode = AP_MODE_11A;	/* Depend on eCurrentOPMode and ucPhyTypeSet */
-		} else if (prP2pConnReqInfo->eConnRequest == P2P_CONNECTION_TYPE_PURE_AP) {
+		} else if ((prP2pConnReqInfo->eConnRequest == P2P_CONNECTION_TYPE_PURE_AP) ||
+			   fgIs1MProbeResp) {
 			/* Depend on eBand */
 			prBssInfo->ucPhyTypeSet = (prAdapter->rWifiVar.ucAvailablePhyTypeSet & PHY_TYPE_SET_802_11BGN);
 			/* Depend on eCurrentOPMode and ucPhyTypeSet */
@@ -663,7 +744,7 @@ p2pFuncStartGO(IN P_ADAPTER_T prAdapter,
 		prBssInfo->u2OperationalRateSet =
 		    rNonHTPhyAttributes[prBssInfo->ucNonHTBasicPhyType].u2SupportedRateSet;
 
-		if (prBssInfo->ucAllSupportedRatesLen == 0) {
+		if ((prBssInfo->ucAllSupportedRatesLen == 0) || fgIs1MProbeResp) {
 			rateGetDataRatesFromRateSet(prBssInfo->u2OperationalRateSet,
 						    prBssInfo->u2BSSBasicRateSet,
 						    prBssInfo->aucAllSupportedRates,
@@ -676,10 +757,12 @@ p2pFuncStartGO(IN P_ADAPTER_T prAdapter,
 		/* 3 <2> Update BSS_INFO_T common part */
 #if CFG_SUPPORT_AAA
 		prBssInfo->fgIsProtection = FALSE;
-		if (prP2pConnReqInfo->eConnRequest == P2P_CONNECTION_TYPE_GO) {
-			prBssInfo->fgIsProtection = TRUE;	/* Always enable protection at P2P GO */
+		/* Always enable protection at P2P GO But OOBE AP */
+		if ((prP2pConnReqInfo->eConnRequest == P2P_CONNECTION_TYPE_GO) && (!fgIsOpenP2P)) {
+			prBssInfo->fgIsProtection = TRUE;
 		} else {
-			ASSERT(prP2pConnReqInfo->eConnRequest == P2P_CONNECTION_TYPE_PURE_AP);
+			if (!fgIsOpenP2P)
+				ASSERT(prP2pConnReqInfo->eConnRequest == P2P_CONNECTION_TYPE_PURE_AP);
 			if (kalP2PGetCipher(prAdapter->prGlueInfo, (UINT_8) prBssInfo->u4PrivateData))
 				prBssInfo->fgIsProtection = TRUE;
 		}
@@ -748,7 +831,7 @@ WLAN_STATUS p2pFuncRoleToBssIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucRoleIdx, O
 	do {
 		ASSERT_BREAK((prAdapter != NULL) && (pucBssIdx != NULL));
 
-		if (ucRoleIdx > BSS_P2P_NUM) {
+		if (ucRoleIdx >= BSS_P2P_NUM) {
 			rWlanStatus = WLAN_STATUS_FAILURE;
 			break;
 		}
@@ -762,6 +845,29 @@ WLAN_STATUS p2pFuncRoleToBssIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucRoleIdx, O
 
 	return rWlanStatus;
 }				/* p2pFuncRoleToBssIdx */
+
+P_P2P_ROLE_FSM_INFO_T p2pFuncGetRoleByBssIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex)
+{
+	INT_32 i = 0;
+	P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo = (P_P2P_ROLE_FSM_INFO_T)NULL;
+
+	do {
+		ASSERT_BREAK((prAdapter != NULL));
+
+		for (i = 0 ; i < BSS_P2P_NUM; i++) {
+			if (!prAdapter->rWifiVar.aprP2pRoleFsmInfo[i])
+				continue;
+
+			if (prAdapter->rWifiVar.aprP2pRoleFsmInfo[i]->ucBssIndex == ucBssIndex)
+				break;
+		}
+		if (i < BSS_P2P_NUM)
+			prP2pRoleFsmInfo = prAdapter->rWifiVar.aprP2pRoleFsmInfo[i];
+
+	} while (FALSE);
+
+	return prP2pRoleFsmInfo;
+}
 
 /* /////////////////////////////////   MT6630 CODE END //////////////////////////////////////////////// */
 
@@ -804,6 +910,7 @@ p2pFuncSwitchOPMode(IN P_ADAPTER_T prAdapter,
 			switch (eOpMode) {
 			case OP_MODE_INFRASTRUCTURE:
 				DBGLOG(P2P, TRACE, "p2pFuncSwitchOPMode: Switch to Client.\n");
+				/* fall through */
 			case OP_MODE_ACCESS_POINT:
 				/* Change interface address. */
 				if (eOpMode == OP_MODE_ACCESS_POINT) {
@@ -899,7 +1006,7 @@ VOID p2pFuncReleaseCh(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx, IN P_P2P_CHN
 		prMsgChRelease->ucBssIndex = ucBssIdx;
 		prMsgChRelease->ucTokenID = prChnlReqInfo->ucSeqNumOfChReq++;
 #if CFG_SUPPORT_DBDC
-		prMsgChRelease->eDBDCBand = (prAdapter->aprBssInfo[ucBssIdx])->eDBDCBand;
+		prMsgChRelease->eDBDCBand = ENUM_BAND_AUTO;
 
 		DBGLOG(P2P, INFO,
 			"p2pFuncReleaseCh: P2P abort channel on band %u.\n",
@@ -948,7 +1055,7 @@ VOID p2pFuncAcquireCh(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx, IN P_P2P_CHN
 		prMsgChReq->ucRfCenterFreqSeg1 = prChnlReqInfo->ucCenterFreqS1;
 		prMsgChReq->ucRfCenterFreqSeg2 = prChnlReqInfo->ucCenterFreqS2;
 #if CFG_SUPPORT_DBDC
-		prMsgChReq->eDBDCBand = (prAdapter->aprBssInfo[ucBssIdx])->eDBDCBand;
+		prMsgChReq->eDBDCBand = ENUM_BAND_AUTO;
 
 		DBGLOG(P2P, INFO,
 		   "p2pFuncAcquireCh: P2P Request channel on band %u.\n",
@@ -962,6 +1069,421 @@ VOID p2pFuncAcquireCh(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx, IN P_P2P_CHN
 
 	} while (FALSE);
 }				/* p2pFuncAcquireCh */
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID p2pFuncStartRdd(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx)
+{
+	P_CMD_RDD_ON_OFF_CTRL_T prCmdRddOnOffCtrl;
+	P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo = (P_P2P_ROLE_FSM_INFO_T) NULL;
+	UINT_8 ucReqChnlNum;
+
+	DEBUGFUNC("p2pFuncStartRdd()");
+
+
+	prP2pRoleFsmInfo = P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
+			prAdapter->aprBssInfo[ucBssIdx]->u4PrivateData);
+
+	ucReqChnlNum = prP2pRoleFsmInfo->rChnlReqInfo.ucReqChnlNum;
+
+	prCmdRddOnOffCtrl = (P_CMD_RDD_ON_OFF_CTRL_T) cnmMemAlloc(prAdapter, RAM_TYPE_MSG,
+				sizeof(*prCmdRddOnOffCtrl));
+
+	if (!prCmdRddOnOffCtrl) {
+		DBGLOG(P2P, ERROR, "cnmMemAlloc for prCmdRddOnOffCtrl failed!\n");
+		return;
+	}
+
+	prCmdRddOnOffCtrl->ucDfsCtrl = RDD_START;
+
+	prCmdRddOnOffCtrl->ucRddIdx = prAdapter->aprBssInfo[ucBssIdx]->eDBDCBand;
+
+	if (rlmDomainGetDfsRegion() == NL80211_DFS_JP) {
+		if (ucReqChnlNum >= 52 && ucReqChnlNum <= 64)
+			prCmdRddOnOffCtrl->ucRegDomain = REG_JP_53;
+		else if (ucReqChnlNum >= 100 && ucReqChnlNum <= 140)
+			prCmdRddOnOffCtrl->ucRegDomain = REG_JP_56;
+	} else {
+		prCmdRddOnOffCtrl->ucRegDomain = REG_DEFAULT;
+	}
+
+	if (prCmdRddOnOffCtrl->ucRddIdx)
+		prCmdRddOnOffCtrl->ucRddInSel = RDD_IN_SEL_1;
+	else
+		prCmdRddOnOffCtrl->ucRddInSel = RDD_IN_SEL_0;
+
+	DBGLOG(P2P, INFO, "p2pFuncStartRdd: Start Radar detection - DFS ctrl: %d, RDD index: %d\n",
+			prCmdRddOnOffCtrl->ucDfsCtrl, prCmdRddOnOffCtrl->ucRddIdx);
+
+	wlanSendSetQueryCmd(prAdapter,
+				CMD_ID_RDD_ON_OFF_CTRL,
+				TRUE,
+				FALSE,
+				FALSE,
+				NULL,
+				NULL,
+				sizeof(*prCmdRddOnOffCtrl), (PUINT_8) prCmdRddOnOffCtrl, NULL, 0);
+
+	cnmMemFree(prAdapter, prCmdRddOnOffCtrl);
+}				/* p2pFuncStartRdd */
+
+VOID p2pFuncStopRdd(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx)
+{
+	P_CMD_RDD_ON_OFF_CTRL_T prCmdRddOnOffCtrl;
+
+	DEBUGFUNC("p2pFuncStopRdd()");
+
+	prCmdRddOnOffCtrl = (P_CMD_RDD_ON_OFF_CTRL_T) cnmMemAlloc(prAdapter, RAM_TYPE_MSG,
+				sizeof(*prCmdRddOnOffCtrl));
+
+	if (!prCmdRddOnOffCtrl) {
+		DBGLOG(P2P, ERROR, "cnmMemAlloc for prCmdRddOnOffCtrl failed!\n");
+		return;
+	}
+
+	prCmdRddOnOffCtrl->ucDfsCtrl = RDD_STOP;
+
+	prCmdRddOnOffCtrl->ucRddIdx = prAdapter->aprBssInfo[ucBssIdx]->eDBDCBand;
+
+	if (prCmdRddOnOffCtrl->ucRddIdx)
+		prCmdRddOnOffCtrl->ucRddInSel = RDD_IN_SEL_1;
+	else
+		prCmdRddOnOffCtrl->ucRddInSel = RDD_IN_SEL_0;
+
+	DBGLOG(P2P, INFO, "p2pFuncStopRdd: Stop Radar detection - DFS ctrl: %d, RDD index: %d\n",
+			prCmdRddOnOffCtrl->ucDfsCtrl, prCmdRddOnOffCtrl->ucRddIdx);
+
+	wlanSendSetQueryCmd(prAdapter,
+				CMD_ID_RDD_ON_OFF_CTRL,
+				TRUE,
+				FALSE,
+				FALSE,
+				NULL,
+				NULL,
+				sizeof(*prCmdRddOnOffCtrl), (PUINT_8) prCmdRddOnOffCtrl, NULL, 0);
+
+	cnmMemFree(prAdapter, prCmdRddOnOffCtrl);
+
+}				/* p2pFuncStopRdd */
+
+VOID p2pFuncDfsSwitchCh(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo, IN P2P_CHNL_REQ_INFO_T rP2pChnlReqInfo)
+{
+
+	P_GLUE_INFO_T prGlueInfo;
+	P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo = (P_P2P_ROLE_FSM_INFO_T) NULL;
+	P_CMD_RDD_ON_OFF_CTRL_T prCmdRddOnOffCtrl;
+
+	DEBUGFUNC("p2pFuncDfsSwitchCh()");
+
+	if (!prBssInfo) {
+		DBGLOG(P2P, ERROR, "prBssInfo shouldn't be NULL!\n");
+		return;
+	}
+
+	/*  Setup Channel, Band */
+	prBssInfo->ucPrimaryChannel = rP2pChnlReqInfo.ucReqChnlNum;
+	prBssInfo->eBand = rP2pChnlReqInfo.eBand;
+	prBssInfo->eBssSCO = rP2pChnlReqInfo.eChnlSco;
+
+	/* Setup channel and bandwidth */
+	rlmBssInitForAPandIbss(prAdapter, prBssInfo);
+
+	/* Update Beacon again for network phy type confirmed. */
+	bssUpdateBeaconContent(prAdapter, prBssInfo->ucBssIndex);
+
+	/* Reset HW TSF Update Mode and Beacon Mode */
+	nicUpdateBss(prAdapter, prBssInfo->ucBssIndex);
+
+	prCmdRddOnOffCtrl = (P_CMD_RDD_ON_OFF_CTRL_T) cnmMemAlloc(prAdapter, RAM_TYPE_MSG,
+					sizeof(*prCmdRddOnOffCtrl));
+
+	if (!prCmdRddOnOffCtrl) {
+		DBGLOG(P2P, ERROR, "cnmMemAlloc for prCmdRddOnOffCtrl failed!\n");
+		return;
+	}
+
+	prCmdRddOnOffCtrl->ucDfsCtrl = RDD_START_TXQ;
+
+	DBGLOG(P2P, INFO, "p2pFuncDfsSwitchCh: Start TXQ - DFS ctrl: %.d\n", prCmdRddOnOffCtrl->ucDfsCtrl);
+
+	wlanSendSetQueryCmd(prAdapter,
+				CMD_ID_RDD_ON_OFF_CTRL,
+				TRUE,
+				FALSE,
+				FALSE,
+				NULL,
+				NULL,
+				sizeof(*prCmdRddOnOffCtrl), (PUINT_8) prCmdRddOnOffCtrl, NULL, 0);
+
+	cnmMemFree(prAdapter, prCmdRddOnOffCtrl);
+
+	prP2pRoleFsmInfo = P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter, prBssInfo->u4PrivateData);
+
+	prGlueInfo = prAdapter->prGlueInfo;
+
+	DBGLOG(P2P, INFO, "p2pFuncDfsSwitchCh: Update to OS\n");
+	cfg80211_ch_switch_notify(prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->prDevHandler,
+					prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->chandef);
+	DBGLOG(P2P, INFO, "p2pFuncDfsSwitchCh: Update to OS Done\n");
+
+	if (prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->chandef) {
+		if (prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->chandef->chan) {
+			cnmMemFree(prGlueInfo->prAdapter,
+				prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->chandef->chan);
+			prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->chandef->chan = NULL;
+		}
+
+		cnmMemFree(prGlueInfo->prAdapter,
+			prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->chandef);
+		prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->chandef = NULL;
+	}
+} /* p2pFuncDfsSwitchCh */
+
+BOOLEAN p2pFuncCheckWeatherRadarBand(IN P_P2P_CHNL_REQ_INFO_T prChnlReqInfo)
+{
+	UINT_8 ucReqChnlNum;
+	UINT_8 ucCenterFreqS1;
+	ENUM_CHANNEL_WIDTH_T eChannelWidth;
+	ENUM_CHNL_EXT_T eChnlSco;
+
+
+	ucReqChnlNum = prChnlReqInfo->ucReqChnlNum;
+	ucCenterFreqS1 = prChnlReqInfo->ucCenterFreqS1;
+	eChannelWidth = prChnlReqInfo->eChannelWidth;
+	eChnlSco = prChnlReqInfo->eChnlSco;
+
+	if (rlmDomainGetDfsRegion() == NL80211_DFS_ETSI) {
+		if (eChannelWidth == VHT_OP_CHANNEL_WIDTH_80) {
+			if (ucCenterFreqS1 >= 120 && ucCenterFreqS1 <= 128)
+				return TRUE;
+		} else {
+			if ((ucReqChnlNum >= 120 && ucReqChnlNum <= 128))
+				return TRUE;
+			else if (ucReqChnlNum == 116 && eChnlSco == CHNL_EXT_SCA) /* ch116, 120 BW40 */
+				return TRUE;
+		}
+	}
+
+	return FALSE;
+}
+
+INT_32 p2pFuncSetDriverCacTime(IN UINT_32 u4CacTime)
+{
+	WLAN_STATUS i4Status = WLAN_STATUS_SUCCESS;
+
+	g_u4DriverCacTime = u4CacTime;
+
+	DBGLOG(P2P, INFO, "p2pFuncSetDriverCacTime: g_u4ManualCacTime = %dsec\n", g_u4DriverCacTime);
+
+	return i4Status;
+}
+
+VOID p2pFuncEnableManualCac(VOID)
+{
+	g_fgManualCac = TRUE;
+}
+
+UINT_32 p2pFuncGetDriverCacTime(VOID)
+{
+	return g_u4DriverCacTime;
+}
+
+BOOLEAN p2pFuncIsManualCac(VOID)
+{
+	return g_fgManualCac;
+}
+
+VOID p2pFuncRadarInfoInit(VOID)
+{
+	kalMemZero(&g_rP2pRadarInfo, sizeof(g_rP2pRadarInfo));
+}
+
+VOID p2pFuncShowRadarInfo(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx)
+{
+	UINT_8 ucCnt = 0;
+	P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo = (P_P2P_ROLE_FSM_INFO_T) NULL;
+	UINT_8 ucReqChnlNum;
+
+	if (g_rP2pRadarInfo.ucRadarReportMode == 1) {
+
+		prP2pRoleFsmInfo = P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
+				prAdapter->aprBssInfo[ucBssIdx]->u4PrivateData);
+
+		ucReqChnlNum = prP2pRoleFsmInfo->rChnlReqInfo.ucReqChnlNum;
+
+		DBGLOG(P2P, INFO, "-----Radar Detected Event-----\n");
+		DBGLOG(P2P, INFO, "Radar detected in DBDC band%d\n", g_rP2pRadarInfo.ucRddIdx);
+
+		switch (rlmDomainGetDfsRegion()) {
+		case NL80211_DFS_FCC:
+			DBGLOG(P2P, INFO, "Regulation domain: FCC\n");
+			break;
+		case NL80211_DFS_ETSI:
+			DBGLOG(P2P, INFO, "Regulation domain: ETSI\n");
+			break;
+		case NL80211_DFS_JP:
+			DBGLOG(P2P, INFO, "Regulation domain: JP\n");
+
+			if (ucReqChnlNum >= 52 && ucReqChnlNum <= 64)
+				DBGLOG(P2P, INFO, "Radar type: W53 - %s\n", p2pFuncJpW53RadarType());
+			else if (ucReqChnlNum >= 100 && ucReqChnlNum <= 140)
+				DBGLOG(P2P, INFO, "Radar type: W56 - %s\n", p2pFuncJpW56RadarType());
+			break;
+		default:
+			break;
+		}
+
+		DBGLOG(P2P, INFO, "Radar Content:\n");
+
+		DBGLOG(P2P, INFO, "start time    pulse width    PRI\n");
+
+		if (g_rP2pRadarInfo.ucPeriodicDetected) {
+			DBGLOG(P2P, INFO, "%-10d    %-11d    -\n"
+				, g_rP2pRadarInfo.arPpbContent[ucCnt].u4PeriodicStartTime
+				, g_rP2pRadarInfo.arPpbContent[ucCnt].u2PeriodicPulseWidth);
+
+			for (ucCnt = 1; ucCnt < g_rP2pRadarInfo.ucPPBNum; ucCnt++) {
+				DBGLOG(P2P, INFO, "%-10d    %-11d    %d\n"
+					, g_rP2pRadarInfo.arPpbContent[ucCnt].u4PeriodicStartTime
+					, g_rP2pRadarInfo.arPpbContent[ucCnt].u2PeriodicPulseWidth
+					, (g_rP2pRadarInfo.arPpbContent[ucCnt].u4PeriodicStartTime
+						- g_rP2pRadarInfo.arPpbContent[ucCnt-1].u4PeriodicStartTime) * 2 / 5);
+			}
+		} else if (g_rP2pRadarInfo.ucLongDetected) {
+			DBGLOG(P2P, INFO, "%-10d    %-11d    -\n"
+				, g_rP2pRadarInfo.arLpbContent[ucCnt].u4LongStartTime
+				, g_rP2pRadarInfo.arLpbContent[ucCnt].u2LongPulseWidth);
+
+			for (ucCnt = 1; ucCnt < g_rP2pRadarInfo.ucLPBNum; ucCnt++) {
+				DBGLOG(P2P, INFO, "%-10d    %-11d    %d\n"
+					, g_rP2pRadarInfo.arLpbContent[ucCnt].u4LongStartTime
+					, g_rP2pRadarInfo.arLpbContent[ucCnt].u2LongPulseWidth
+					, (g_rP2pRadarInfo.arLpbContent[ucCnt].u4LongStartTime
+						- g_rP2pRadarInfo.arLpbContent[ucCnt-1].u4LongStartTime) * 2 / 5);
+			}
+		}
+	}
+}
+
+VOID p2pFuncGetRadarInfo(IN struct P2P_RADAR_INFO *prP2pRadarInfo)
+{
+	kalMemCopy(prP2pRadarInfo, &g_rP2pRadarInfo, sizeof(*prP2pRadarInfo));
+}
+
+PUINT_8 p2pFuncJpW53RadarType(VOID)
+{
+	UINT_32 u4Type1Diff;
+	UINT_32 u4Type2Diff;
+
+	if (g_rP2pRadarInfo.u4PRI1stUs >= 1428)
+		u4Type1Diff = g_rP2pRadarInfo.u4PRI1stUs - 1428;
+	else
+		u4Type1Diff = 1428 - g_rP2pRadarInfo.u4PRI1stUs;
+
+	if (g_rP2pRadarInfo.u4PRI1stUs >= 3846)
+		u4Type2Diff = g_rP2pRadarInfo.u4PRI1stUs - 3846;
+	else
+		u4Type2Diff = 3846 - g_rP2pRadarInfo.u4PRI1stUs;
+
+	if (u4Type1Diff < u4Type2Diff)
+		return apucW53RadarType[1];
+	else
+		return apucW53RadarType[2];
+}
+
+PUINT_8 p2pFuncJpW56RadarType(VOID)
+{
+	UINT_32 u4Type1Diff;
+	UINT_32 u4Type2Diff;
+
+	if (g_rP2pRadarInfo.ucLongDetected)
+		return apucW56RadarType[7];
+
+	if (g_rP2pRadarInfo.u4PRI1stUs >= 3980 && g_rP2pRadarInfo.u4PRI1stUs <= 4020)
+		return apucW56RadarType[3];
+
+	if (g_rP2pRadarInfo.u4PRI1stUs >= 1368 && g_rP2pRadarInfo.u4PRI1stUs <= 1448) {
+
+		if (g_rP2pRadarInfo.u4PRI1stUs >= 1388)
+			u4Type1Diff = g_rP2pRadarInfo.u4PRI1stUs - 1388;
+		else
+			u4Type1Diff = 1388 - g_rP2pRadarInfo.u4PRI1stUs;
+
+		if (g_rP2pRadarInfo.u4PRI1stUs >= 1428)
+			u4Type2Diff = g_rP2pRadarInfo.u4PRI1stUs - 1428;
+		else
+			u4Type2Diff = 1428 - g_rP2pRadarInfo.u4PRI1stUs;
+
+		if (u4Type1Diff < u4Type2Diff)
+			return apucW56RadarType[1];
+		else
+			return apucW56RadarType[2];
+
+	}
+
+	if (g_rP2pRadarInfo.u4PRI1stUs >= 130 && g_rP2pRadarInfo.u4PRI1stUs < 200)
+		return apucW56RadarType[4];
+
+	if (g_rP2pRadarInfo.u4PRI1stUs >= 200 && g_rP2pRadarInfo.u4PRI1stUs <= 520) {
+
+		if (g_rP2pRadarInfo.u4PRI1stUs <= 230)
+		return apucW56RadarType[9];
+
+		if (g_rP2pRadarInfo.u4PRI1stUs >= 323 && g_rP2pRadarInfo.u4PRI1stUs <= 343)
+			return apucW56RadarType[10];
+
+		return apucW56RadarType[11];
+	}
+
+	return apucW56RadarType[0];
+}
+
+VOID p2pFuncSetRadarDetectMode(IN UINT_8 ucRadarDetectMode)
+{
+	g_ucRadarDetectMode = ucRadarDetectMode;
+
+	DBGLOG(P2P, INFO, "p2pFuncSetRadarDetectMode: g_ucRadarDetectMode: %d\n", g_ucRadarDetectMode);
+}
+
+UINT_8 p2pFuncGetRadarDetectMode(VOID)
+{
+	return g_ucRadarDetectMode;
+}
+
+VOID p2pFuncSetDfsState(IN UINT_8 ucDfsState)
+{
+	DBGLOG(P2P, INFO, "[DFS_STATE] TRANSITION: [%s] -> [%s]\n",
+		apucDfsState[g_ucDfsState], apucDfsState[ucDfsState]);
+
+	g_ucDfsState = ucDfsState;
+}
+
+UINT_8 p2pFuncGetDfsState(VOID)
+{
+	return g_ucDfsState;
+}
+
+PUINT_8 p2pFuncShowDfsState(VOID)
+{
+	return apucDfsState[g_ucDfsState];
+}
+
+VOID p2pFuncRecordCacStartBootTime(VOID)
+{
+	g_u4CacStartBootTime = kalGetBootTime();
+}
+
+UINT_32 p2pFuncGetCacRemainingTime(VOID)
+{
+	UINT_32 u4CurrentBootTime;
+	UINT_32 u4CacRemainingTime;
+
+	u4CurrentBootTime = kalGetBootTime();
+
+	u4CacRemainingTime = g_u4DriverCacTime - (u4CurrentBootTime - g_u4CacStartBootTime)/1000000;
+
+	return u4CacRemainingTime;
+}
+#endif
 
 #if 0
 WLAN_STATUS
@@ -1142,6 +1664,39 @@ p2pFuncBeaconUpdate(IN P_ADAPTER_T prAdapter,
 	return rWlanStatus;
 }				/* p2pFuncBeaconUpdate */
 
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief    This function is to update extra IEs (ex: WPS) for assoc resp.
+*           Caller should sanity check the params.
+*
+* \param[in] prAdapter      Pointer of ADAPTER_T
+* \param[in] prP2pBssInfo   Pointer to BSS_INFO_T structure
+* \param[in] AssocRespIE    Pointer to extra IEs for assoc resp
+* \param[in] u4AssocRespLen Length of extra IEs for assoc resp
+*
+* \return WLAN_STATUS
+*/
+/*----------------------------------------------------------------------------*/
+
+WLAN_STATUS
+p2pFuncAssocRespUpdate(IN P_ADAPTER_T prAdapter,
+		    IN P_BSS_INFO_T prP2pBssInfo,
+		    IN PUINT_8 AssocRespIE, IN UINT_32 u4AssocRespLen)
+{
+	UINT_8 ucOuiType = 0;
+	UINT_16 u2SubTypeVersion = 0;
+
+	if (!rsnParseCheckForWFAInfoElem(prAdapter, AssocRespIE, &ucOuiType, &u2SubTypeVersion))
+		return WLAN_STATUS_FAILURE;
+
+	if (ucOuiType == VENDOR_OUI_TYPE_WPS) {
+		kalP2PUpdateWSC_IE(prAdapter->prGlueInfo, 3, (PUINT_8)AssocRespIE, IE_SIZE(AssocRespIE),
+			(UINT_8) (prP2pBssInfo->u4PrivateData));
+	}
+
+	return WLAN_STATUS_SUCCESS;
+}
+
 #endif
 
 #if 0
@@ -1282,6 +1837,9 @@ VOID
 p2pFuncDissolve(IN P_ADAPTER_T prAdapter,
 		IN P_BSS_INFO_T prP2pBssInfo, IN BOOLEAN fgSendDeauth, IN UINT_16 u2ReasonCode)
 {
+	P_STA_RECORD_T prCurrStaRec, prStaRecNext;
+	P_LINK_T prClientList;
+
 	DEBUGFUNC("p2pFuncDissolve()");
 
 	do {
@@ -1292,7 +1850,7 @@ p2pFuncDissolve(IN P_ADAPTER_T prAdapter,
 		case OP_MODE_INFRASTRUCTURE:
 			/* Reset station record status. */
 			if (prP2pBssInfo->prStaRecOfAP) {
-#if CFG_WPS_DISCONNECT || (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
+#if CFG_WPS_DISCONNECT || (KERNEL_VERSION(4, 4, 0) <= CFG80211_VERSION_CODE)
 				kalP2PGCIndicateConnectionStatus(prAdapter->prGlueInfo,
 								 (UINT_8) prP2pBssInfo->u4PrivateData, NULL, NULL, 0,
 								 REASON_CODE_DEAUTH_LEAVING_BSS,
@@ -1320,23 +1878,18 @@ p2pFuncDissolve(IN P_ADAPTER_T prAdapter,
 			/* Under AP mode, we would net send deauthentication frame to each STA.
 			 * We only stop the Beacon & let all stations timeout.
 			 */
-			{
-				P_STA_RECORD_T prCurrStaRec;
-				P_LINK_T prClientList;
+			/* Send deauth. */
+			authSendDeauthFrame(prAdapter,
+					    prP2pBssInfo,
+					    NULL, (P_SW_RFB_T) NULL, u2ReasonCode, (PFN_TX_DONE_HANDLER) NULL);
 
-				/* Send deauth. */
-				authSendDeauthFrame(prAdapter,
-						    prP2pBssInfo,
-						    NULL, (P_SW_RFB_T) NULL, u2ReasonCode, (PFN_TX_DONE_HANDLER) NULL);
+			prClientList = &prP2pBssInfo->rStaRecOfClientList;
 
-				prClientList = &prP2pBssInfo->rStaRecOfClientList;
-
-				LINK_FOR_EACH_ENTRY(prCurrStaRec, prClientList, rLinkEntry, STA_RECORD_T) {
-					ASSERT(prCurrStaRec);
-					p2pFuncDisconnect(prAdapter, prP2pBssInfo, prCurrStaRec, TRUE, u2ReasonCode);
-				}
+			LINK_FOR_EACH_ENTRY_SAFE(prCurrStaRec, prStaRecNext,
+				prClientList, rLinkEntry, STA_RECORD_T) {
+				ASSERT(prCurrStaRec);
+				p2pFuncDisconnect(prAdapter, prP2pBssInfo, prCurrStaRec, TRUE, u2ReasonCode);
 			}
-
 			break;
 		default:
 			return;	/* 20110420 -- alreay in Device Mode. */
@@ -1456,6 +2009,10 @@ VOID p2pFuncSetChannel(IN P_ADAPTER_T prAdapter, IN UINT_8 ucRoleIdx, IN P_RF_CH
 
 		prP2pConnReqInfo->rChannelInfo.ucChannelNum = prRfChannelInfo->ucChannelNum;
 		prP2pConnReqInfo->rChannelInfo.eBand = prRfChannelInfo->eBand;
+		prP2pConnReqInfo->eChnlBw = prRfChannelInfo->ucChnlBw;
+		prP2pConnReqInfo->u2PriChnlFreq = prRfChannelInfo->u2PriChnlFreq;
+		prP2pConnReqInfo->u4CenterFreq1 = prRfChannelInfo->u4CenterFreq1;
+		prP2pConnReqInfo->u4CenterFreq2 = prRfChannelInfo->u4CenterFreq2;
 
 	} while (FALSE);
 }				/* p2pFuncSetChannel */
@@ -1562,108 +2119,110 @@ p2pFuncValidateAuth(IN P_ADAPTER_T prAdapter,
 		    IN P_BSS_INFO_T prP2pBssInfo,
 		    IN P_SW_RFB_T prSwRfb, IN PP_STA_RECORD_T pprStaRec, OUT PUINT_16 pu2StatusCode)
 {
-	BOOLEAN fgReplyAuth = TRUE;
+	BOOLEAN fgPmfConn = FALSE;
 	P_STA_RECORD_T prStaRec = (P_STA_RECORD_T) NULL;
 	P_WLAN_AUTH_FRAME_T prAuthFrame = (P_WLAN_AUTH_FRAME_T) NULL;
 
 	DBGLOG(P2P, TRACE, "p2pValidate Authentication Frame\n");
 
-	do {
-		ASSERT_BREAK((prAdapter != NULL) &&
-			     (prP2pBssInfo != NULL) &&
-			     (prSwRfb != NULL) && (pprStaRec != NULL) && (pu2StatusCode != NULL));
 
-		/* P2P 3.2.8 */
-		*pu2StatusCode = STATUS_CODE_REQ_DECLINED;
-		prAuthFrame = (P_WLAN_AUTH_FRAME_T) prSwRfb->pvHeader;
+	/* P2P 3.2.8 */
+	*pu2StatusCode = STATUS_CODE_REQ_DECLINED;
+	prAuthFrame = (P_WLAN_AUTH_FRAME_T) prSwRfb->pvHeader;
 
-		if ((prP2pBssInfo->eCurrentOPMode != OP_MODE_ACCESS_POINT) ||
-		    (prP2pBssInfo->eIntendOPMode != OP_MODE_NUM)) {
-			/* We are not under AP Mode yet. */
-			fgReplyAuth = FALSE;
-			DBGLOG(P2P, WARN, "Current OP mode is not under AP mode. (%d)\n", prP2pBssInfo->eCurrentOPMode);
-			break;
+	if ((prP2pBssInfo->eCurrentOPMode != OP_MODE_ACCESS_POINT) ||
+	    (prP2pBssInfo->eIntendOPMode != OP_MODE_NUM)) {
+		/* We are not under AP Mode yet. */
+		DBGLOG(P2P, WARN, "Current OP mode is not under AP mode. (%d)\n", prP2pBssInfo->eCurrentOPMode);
+		return FALSE;
+	}
+
+	prStaRec = cnmGetStaRecByAddress(prAdapter, prP2pBssInfo->ucBssIndex, prAuthFrame->aucSrcAddr);
+
+	if (!prStaRec) {
+		prStaRec = cnmStaRecAlloc(prAdapter, STA_TYPE_P2P_GC,
+					  prP2pBssInfo->ucBssIndex, prAuthFrame->aucSrcAddr);
+
+		/* TODO(Kevin): Error handling of allocation of STA_RECORD_T for
+		 * exhausted case and do removal of unused STA_RECORD_T.
+		 */
+		/* Sent a message event to clean un-used STA_RECORD_T. */
+		ASSERT(prStaRec);
+
+		prSwRfb->ucStaRecIdx = prStaRec->ucIndex;
+
+		prStaRec->u2BSSBasicRateSet = prP2pBssInfo->u2BSSBasicRateSet;
+
+		prStaRec->u2DesiredNonHTRateSet = RATE_SET_ERP_P2P;
+
+		prStaRec->u2OperationalRateSet = RATE_SET_ERP_P2P;
+		prStaRec->ucPhyTypeSet = PHY_TYPE_SET_802_11GN;
+
+		/* Update default Tx rate */
+		nicTxUpdateStaRecDefaultRate(prStaRec);
+
+		/* NOTE(Kevin): Better to change state here, not at TX Done */
+		cnmStaRecChangeState(prAdapter, prStaRec, STA_STATE_1);
+	} else {
+#if CFG_SUPPORT_802_11W
+		/* AP PMF. if PMF connection, do not reset state & FSM */
+		fgPmfConn = rsnCheckBipKeyInstalled(prAdapter, prStaRec);
+		if (fgPmfConn) {
+			DBGLOG(P2P, WARN, "PMF Connction, return false\n");
+			return FALSE;
 		}
+#endif
 
-		prStaRec = cnmGetStaRecByAddress(prAdapter, prP2pBssInfo->ucBssIndex, prAuthFrame->aucSrcAddr);
+		prSwRfb->ucStaRecIdx = prStaRec->ucIndex;
 
-		if (!prStaRec) {
-			prStaRec = cnmStaRecAlloc(prAdapter, STA_TYPE_P2P_GC,
-						  prP2pBssInfo->ucBssIndex, prAuthFrame->aucSrcAddr);
+		if ((prStaRec->ucStaState > STA_STATE_1) && (IS_STA_IN_P2P(prStaRec))) {
 
-			/* TODO(Kevin): Error handling of allocation of STA_RECORD_T for
-			 * exhausted case and do removal of unused STA_RECORD_T.
-			 */
-			/* Sent a message event to clean un-used STA_RECORD_T. */
-			ASSERT(prStaRec);
-
-			prSwRfb->ucStaRecIdx = prStaRec->ucIndex;
-
-			prStaRec->u2BSSBasicRateSet = prP2pBssInfo->u2BSSBasicRateSet;
-
-			prStaRec->u2DesiredNonHTRateSet = RATE_SET_ERP_P2P;
-
-			prStaRec->u2OperationalRateSet = RATE_SET_ERP_P2P;
-			prStaRec->ucPhyTypeSet = PHY_TYPE_SET_802_11GN;
-
-			/* Update default Tx rate */
-			nicTxUpdateStaRecDefaultRate(prStaRec);
-
-			/* NOTE(Kevin): Better to change state here, not at TX Done */
 			cnmStaRecChangeState(prAdapter, prStaRec, STA_STATE_1);
-		} else {
-			prSwRfb->ucStaRecIdx = prStaRec->ucIndex;
 
-			if ((prStaRec->ucStaState > STA_STATE_1) && (IS_STA_IN_P2P(prStaRec))) {
+			p2pFuncResetStaRecStatus(prAdapter, prStaRec);
 
-				cnmStaRecChangeState(prAdapter, prStaRec, STA_STATE_1);
-
-				p2pFuncResetStaRecStatus(prAdapter, prStaRec);
-
-				bssRemoveClient(prAdapter, prP2pBssInfo, prStaRec);
-			}
-
+			bssRemoveClient(prAdapter, prP2pBssInfo, prStaRec);
 		}
 
-		if (bssGetClientCount(prAdapter, prP2pBssInfo) >= P2P_MAXIMUM_CLIENT_COUNT
+	}
+
+	if (bssGetClientCount(prAdapter, prP2pBssInfo) >= P2P_MAXIMUM_CLIENT_COUNT
+		|| !p2pRoleProcessACLInspection(prAdapter, prStaRec->aucMacAddr, prP2pBssInfo->ucBssIndex)
 #if CFG_SUPPORT_HOTSPOT_WPS_MANAGER
-			|| kalP2PMaxClients(prAdapter->prGlueInfo, bssGetClientCount(prAdapter, prP2pBssInfo),
-			(UINT_8) prP2pBssInfo->u4PrivateData)
+		|| kalP2PMaxClients(prAdapter->prGlueInfo, bssGetClientCount(prAdapter, prP2pBssInfo),
+		(UINT_8) prP2pBssInfo->u4PrivateData)
 #endif
-		) {
-			/* GROUP limit full. */
-			/* P2P 3.2.8 */
-			DBGLOG(P2P, WARN, "Group Limit Full. (%d)\n", bssGetClientCount(prAdapter, prP2pBssInfo));
-			cnmStaRecFree(prAdapter, prStaRec);
-			break;
-		}
+	) {
+		/* GROUP limit full. */
+		/* P2P 3.2.8 */
+		DBGLOG(P2P, WARN, "Group Limit Full. (%d)\n", bssGetClientCount(prAdapter, prP2pBssInfo));
+		cnmStaRecFree(prAdapter, prStaRec);
+		return TRUE;
+	}
 #if CFG_SUPPORT_HOTSPOT_WPS_MANAGER
-		else {
-			/* Hotspot Blacklist */
-			if (prAuthFrame->aucSrcAddr) {
-				if (kalP2PCmpBlackList(prAdapter->prGlueInfo, prAuthFrame->aucSrcAddr,
-					(UINT_8) prP2pBssInfo->u4PrivateData)) {
-					fgReplyAuth = FALSE;
-					return fgReplyAuth;
-				}
-			}
+	else {
+		/* Hotspot Blacklist */
+		if (kalP2PCmpBlackList(prAdapter->prGlueInfo, prAuthFrame->aucSrcAddr,
+			(UINT_8) prP2pBssInfo->u4PrivateData)) {
+			return FALSE;
 		}
+
+	}
 #endif
-		/* prStaRec->eStaType = STA_TYPE_INFRA_CLIENT; */
-		prStaRec->eStaType = STA_TYPE_P2P_GC;
+	/* prStaRec->eStaType = STA_TYPE_INFRA_CLIENT; */
+	prStaRec->eStaType = STA_TYPE_P2P_GC;
 
-		/* Update Station Record - Status/Reason Code */
-		prStaRec->u2StatusCode = STATUS_CODE_SUCCESSFUL;
+	/* Update Station Record - Status/Reason Code */
+	prStaRec->u2StatusCode = STATUS_CODE_SUCCESSFUL;
 
-		prStaRec->ucJoinFailureCount = 0;
+	prStaRec->ucJoinFailureCount = 0;
 
-		*pprStaRec = prStaRec;
+	*pprStaRec = prStaRec;
 
-		*pu2StatusCode = STATUS_CODE_SUCCESSFUL;
+	*pu2StatusCode = STATUS_CODE_SUCCESSFUL;
 
-	} while (FALSE);
 
-	return fgReplyAuth;
+	return TRUE;
 
 }				/* p2pFuncValidateAuth */
 
@@ -1782,6 +2341,40 @@ BOOLEAN p2pFuncValidateAssocReq(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb,
 	return fgReplyAssocResp;
 
 }				/* p2pFuncValidateAssocReq */
+
+/*----------------------------------------------------------------------------*/
+/*!
+* @brief This function is used to check the TKIP IE
+*
+*
+* @return none
+*/
+/*----------------------------------------------------------------------------*/
+BOOLEAN p2pFuncParseCheckForTKIPInfoElem(IN PUINT_8 pucBuf)
+{
+	UINT_8 aucWfaOui[] = VENDOR_OUI_WFA;
+	P_WPA_INFO_ELEM_T prWpaIE = (P_WPA_INFO_ELEM_T) NULL;
+	UINT_32 u4GroupKeyCipher = 0;
+
+	if (pucBuf == NULL)
+		return FALSE;
+
+	prWpaIE = (P_WPA_INFO_ELEM_T) pucBuf;
+
+	if (prWpaIE->ucLength <= ELEM_MIN_LEN_WFA_OUI_TYPE_SUBTYPE)
+		return FALSE;
+
+	if (kalMemCmp(prWpaIE->aucOui, aucWfaOui, sizeof(aucWfaOui)))
+		return FALSE;
+
+	WLAN_GET_FIELD_32(&prWpaIE->u4GroupKeyCipherSuite, &u4GroupKeyCipher);
+
+	if (prWpaIE->ucOuiType == VENDOR_OUI_TYPE_WPA &&
+		u4GroupKeyCipher == WPA_CIPHER_SUITE_TKIP)
+		return TRUE;
+	else
+		return FALSE;
+}				/* p2pFuncParseCheckForP2PInfoElem */
 
 /*----------------------------------------------------------------------------*/
 /*!
@@ -1927,6 +2520,8 @@ p2pFuncParseBeaconContent(IN P_ADAPTER_T prAdapter,
 	PUINT_8 pucIE = (PUINT_8) NULL;
 	UINT_16 u2Offset = 0;
 	P_P2P_SPECIFIC_BSS_INFO_T prP2pSpecificBssInfo = (P_P2P_SPECIFIC_BSS_INFO_T) NULL;
+	UINT_8 i = 0;
+	RSN_INFO_T rRsnIe;
 
 	do {
 		ASSERT_BREAK((prAdapter != NULL) && (prP2pBssInfo != NULL));
@@ -1975,12 +2570,12 @@ p2pFuncParseBeaconContent(IN P_ADAPTER_T prAdapter,
 			case ELEM_ID_SUP_RATES:	/* 1 *//* V *//* Done */
 				{
 					DBGLOG(P2P, TRACE, "Support Rate IE\n");
+					if ((SUP_RATES_IE(pucIE)->ucLength) > ELEM_MAX_LEN_SUP_RATES)
+						SUP_RATES_IE(pucIE)->ucLength = ELEM_MAX_LEN_SUP_RATES;
 					kalMemCopy(prP2pBssInfo->aucAllSupportedRates,
 						   SUP_RATES_IE(pucIE)->aucSupportedRates,
 						   SUP_RATES_IE(pucIE)->ucLength);
-
 					prP2pBssInfo->ucAllSupportedRatesLen = SUP_RATES_IE(pucIE)->ucLength;
-
 					DBGLOG_MEM8(P2P, TRACE,
 						    SUP_RATES_IE(pucIE)->aucSupportedRates,
 						    SUP_RATES_IE(pucIE)->ucLength);
@@ -2082,20 +2677,41 @@ p2pFuncParseBeaconContent(IN P_ADAPTER_T prAdapter,
 				}
 				break;
 			case ELEM_ID_RSN:	/* 48 *//* V */
-				{
-					RSN_INFO_T rRsnIe;
 
-					DBGLOG(P2P, TRACE, "RSN IE\n");
-					kalP2PSetCipher(prAdapter->prGlueInfo, IW_AUTH_CIPHER_CCMP,
-						(UINT_8) prP2pBssInfo->u4PrivateData);
+				DBGLOG(P2P, TRACE, "RSN IE\n");
+				kalP2PSetCipher(prAdapter->prGlueInfo, IW_AUTH_CIPHER_CCMP,
+					(UINT_8) prP2pBssInfo->u4PrivateData);
 
-					if (rsnParseRsnIE(prAdapter, RSN_IE(pucIE), &rRsnIe)) {
-						prP2pBssInfo->u4RsnSelectedGroupCipher = RSN_CIPHER_SUITE_CCMP;
-						prP2pBssInfo->u4RsnSelectedPairwiseCipher = RSN_CIPHER_SUITE_CCMP;
-						prP2pBssInfo->u4RsnSelectedAKMSuite = RSN_AKM_SUITE_PSK;
-						prP2pBssInfo->u2RsnSelectedCapInfo = rRsnIe.u2RsnCap;
+				if (rsnParseRsnIE(prAdapter, RSN_IE(pucIE), &rRsnIe)) {
+					prP2pBssInfo->u4RsnSelectedGroupCipher = RSN_CIPHER_SUITE_CCMP;
+					prP2pBssInfo->u4RsnSelectedPairwiseCipher = RSN_CIPHER_SUITE_CCMP;
+					prP2pBssInfo->u4RsnSelectedAKMSuite = RSN_AKM_SUITE_PSK;
+					prP2pBssInfo->u2RsnSelectedCapInfo = rRsnIe.u2RsnCap;
+					DBGLOG(RSN, TRACE, "RsnIe CAP:0x%x\n", rRsnIe.u2RsnCap);
+				}
+
+#if CFG_SUPPORT_802_11W
+				/* AP PMF */
+				prP2pBssInfo->rApPmfCfg.fgMfpc = (rRsnIe.u2RsnCap & ELEM_WPA_CAP_MFPC) ? 1 : 0;
+				prP2pBssInfo->rApPmfCfg.fgMfpr = (rRsnIe.u2RsnCap & ELEM_WPA_CAP_MFPR) ? 1 : 0;
+
+				for (i = 0; i < rRsnIe.u4AuthKeyMgtSuiteCount; i++) {
+					if ((rRsnIe.au4AuthKeyMgtSuite[i] == RSN_AKM_SUITE_PSK_SHA256) ||
+						(rRsnIe.au4AuthKeyMgtSuite[i] == RSN_AKM_SUITE_802_1X_SHA256)) {
+						DBGLOG(RSN, INFO, "SHA256 support\n");
+						/* over-write u4RsnSelectedAKMSuite by SHA256 AKM */
+						prP2pBssInfo->u4RsnSelectedAKMSuite =
+							rRsnIe.au4AuthKeyMgtSuite[i];
+						prP2pBssInfo->rApPmfCfg.fgSha256 = TRUE;
+						break;
 					}
 				}
+				DBGLOG(RSN, ERROR, "bcn mfpc:%d, mfpr:%d, sha256:%d\n",
+					prP2pBssInfo->rApPmfCfg.fgMfpc,
+					prP2pBssInfo->rApPmfCfg.fgMfpr,
+					prP2pBssInfo->rApPmfCfg.fgSha256);
+#endif
+
 				break;
 			case ELEM_ID_EXTENDED_SUP_RATES:	/* 50 *//* V */
 				/* ELEM_ID_SUP_RATES should be placed before ELEM_ID_EXTENDED_SUP_RATES. */
@@ -2207,7 +2823,7 @@ p2pFuncParseBeaconVenderId(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucIE,
 
 		if (rsnParseCheckForWFAInfoElem(prAdapter, pucIE, &ucOuiType, &u2SubTypeVersion)) {
 			if ((ucOuiType == VENDOR_OUI_TYPE_WPA) && (u2SubTypeVersion == VERSION_WPA)) {
-				if (kalP2PGetCcmpCipher(prAdapter->prGlueInfo, ucRoleIndex))
+				if (!kalP2PGetCcmpCipher(prAdapter->prGlueInfo, ucRoleIndex))
 					kalP2PSetCipher(prAdapter->prGlueInfo, IW_AUTH_CIPHER_TKIP, ucRoleIndex);
 				kalMemCopy(prP2pSpecificBssInfo->aucWpaIeBuffer, pucIE, IE_SIZE(pucIE));
 				prP2pSpecificBssInfo->u2WpaIeLen = IE_SIZE(pucIE);
@@ -3076,31 +3692,30 @@ VOID p2pFuncGenerateP2p_IEForAssocRsp(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T
 {
 	P_STA_RECORD_T prStaRec = (P_STA_RECORD_T) NULL;
 
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prMsduInfo != NULL));
 
-		prStaRec = cnmGetStaRecByIndex(prAdapter, prMsduInfo->ucStaRecIndex);
+	prStaRec = cnmGetStaRecByIndex(prAdapter, prMsduInfo->ucStaRecIndex);
 
-		if (IS_STA_IN_P2P(prStaRec)) {
-			DBGLOG(P2P, TRACE, "Generate NULL P2P IE for Assoc Rsp.\n");
+	if (!prStaRec) {
+		DBGLOG(P2P, ERROR, "prStaRec of ucStaRecIndex %d is NULL!\n",
+			prMsduInfo->ucStaRecIndex);
+		return;
+	}
 
-			p2pFuncGenerateP2P_IE(prAdapter,
-					      prMsduInfo->ucBssIndex,
-					      TRUE,
-					      &prMsduInfo->u2FrameLength,
-					      prMsduInfo->prPacket,
-					      1500,
-					      txAssocRspAttributesTable,
-					      sizeof(txAssocRspAttributesTable) / sizeof(APPEND_VAR_ATTRI_ENTRY_T));
-		} else {
+	if (IS_STA_IN_P2P(prStaRec)) {
+		DBGLOG(P2P, TRACE, "Generate NULL P2P IE for Assoc Rsp.\n");
 
-			DBGLOG(P2P, TRACE, "Legacy device, no P2P IE.\n");
-		}
+		p2pFuncGenerateP2P_IE(prAdapter,
+				      prMsduInfo->ucBssIndex,
+				      TRUE,
+				      &prMsduInfo->u2FrameLength,
+				      prMsduInfo->prPacket,
+				      1500,
+				      txAssocRspAttributesTable,
+				      sizeof(txAssocRspAttributesTable) / sizeof(APPEND_VAR_ATTRI_ENTRY_T));
+	} else {
 
-	} while (FALSE);
-
-	return;
-
+		DBGLOG(P2P, TRACE, "Legacy device, no P2P IE.\n");
+	}
 }				/* p2pFuncGenerateP2p_IEForAssocRsp */
 
 UINT_32
@@ -3522,9 +4137,13 @@ p2pFuncComposeBeaconProbeRspTemplate(IN P_ADAPTER_T prAdapter,
 				cnmMgtPktFree(prAdapter, prP2pProbeRspInfo->prProbeRspMsduTemplate);
 
 			prP2pProbeRspInfo->prProbeRspMsduTemplate = cnmMgtPktAlloc(prAdapter, u4BcnBufLen);
+			if (!prP2pProbeRspInfo->prProbeRspMsduTemplate) {
+				DBGLOG(P2P, ERROR, "cnmMgtPktAlloc fail!\n");
+				rWlanStatus = WLAN_STATUS_FAILURE;
+				break;
+			}
 
 			prMsduInfo = prP2pProbeRspInfo->prProbeRspMsduTemplate;
-
 			prMsduInfo->eSrc = TX_PACKET_MGMT;
 			prMsduInfo->ucStaRecIndex = 0xFF;
 			prMsduInfo->ucBssIndex = prP2pBssInfo->ucBssIndex;

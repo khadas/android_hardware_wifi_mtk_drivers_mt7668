@@ -85,6 +85,12 @@
 ********************************************************************************
 */
 APPEND_VAR_IE_ENTRY_T txAssocReqIETable[] = {
+#if CFG_SUPPORT_SPEC_MGMT
+	{(ELEM_HDR_LEN + ELEM_MAX_LEN_POWER_CAP), NULL, rlmReqGeneratePowerCapIE}
+	,			/* 33 */
+	{(ELEM_HDR_LEN + ELEM_MAX_LEN_SUPPORTED_CHANNELS), NULL, rlmReqGenerateSupportedChIE}
+	,			/* 36 */
+#endif
 	{(ELEM_HDR_LEN + ELEM_MAX_LEN_HT_CAP), NULL, rlmReqGenerateHtCapIE}
 	,			/* 45 */
 #if CFG_SUPPORT_WPS2
@@ -161,6 +167,10 @@ APPEND_VAR_IE_ENTRY_T txAssocRespIETable[] = {
 #if CFG_SUPPORT_MTK_SYNERGY
 	{(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE}	/* 221 */
 #endif
+	,
+#if CFG_SUPPORT_802_11W
+	{(ELEM_HDR_LEN + ELEM_MAX_LEN_TIMEOUT_IE), NULL, rsnPmfGenerateTimeoutIE}	/* 56 */
+#endif
 
 };
 #endif /* CFG_SUPPORT_AAA */
@@ -198,8 +208,11 @@ UINT_16 assocBuildCapabilityInfo(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prS
 {
 	UINT_32 u4NonHTPhyType;
 	UINT_16 u2CapInfo;
+	P_BSS_INFO_T prBssInfo;
 
 	ASSERT(prStaRec);
+
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, prStaRec->ucBssIndex);
 
 	/* Set up our requested capabilities. */
 	u2CapInfo = CAP_INFO_ESS;
@@ -226,7 +239,12 @@ UINT_16 assocBuildCapabilityInfo(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prS
 		}
 
 #if CFG_SUPPORT_SPEC_MGMT
-		if (prAdapter->fgEnable5GBand == TRUE)
+		/* 802.11h spectrum management is for 5G band, so
+		 * now we only enable spectrum management bit for 5G case.
+		 * In TGn 5.2.22, spectrum management bit should set to 1
+		 * to pass the UCC's check.
+		 */
+		if (prBssInfo && prBssInfo->eBand == BAND_5G)
 			u2CapInfo |= CAP_INFO_SPEC_MGT;
 #endif
 
@@ -253,7 +271,7 @@ UINT_16 assocBuildCapabilityInfo(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prS
 * @return (none)
 */
 /*----------------------------------------------------------------------------*/
-__KAL_INLINE__ VOID assocBuildReAssocReqFrameCommonIEs(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo)
+static __KAL_INLINE__ VOID assocBuildReAssocReqFrameCommonIEs(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo)
 {
 	P_CONNECTION_SETTINGS_T prConnSettings;
 	P_STA_RECORD_T prStaRec;
@@ -384,7 +402,7 @@ __KAL_INLINE__ VOID assocBuildReAssocReqFrameCommonIEs(IN P_ADAPTER_T prAdapter,
 * @return (none)
 */
 /*----------------------------------------------------------------------------*/
-__KAL_INLINE__ VOID
+VOID
 assocComposeReAssocReqFrameHeaderAndFF(IN P_ADAPTER_T prAdapter,
 				       IN P_STA_RECORD_T prStaRec,
 				       IN PUINT_8 pucBuffer, IN UINT_8 aucMACAddress[], IN OUT PUINT_16 pu2PayloadLen)
@@ -432,10 +450,10 @@ assocComposeReAssocReqFrameHeaderAndFF(IN P_ADAPTER_T prAdapter,
 	WLAN_SET_FIELD_16(&prAssocFrame->u2CapInfo, u2CapInfo);
 
 	/* Calculate the listen interval for the maximum power mode. Currently, we
-	*  set it to the value 2 times DTIM period.
+	*  set it to the value 2 times DTIM period by default.
 	*/
 	if (prStaRec->ucDTIMPeriod) {
-		u2ListenInterval = prStaRec->ucDTIMPeriod * DEFAULT_LISTEN_INTERVAL_BY_DTIM_PERIOD;
+		u2ListenInterval = prStaRec->ucDTIMPeriod * prAdapter->rWifiVar.ucListenDtimInterval;
 	} else {
 		DBGLOG(SAA, TRACE, "Use default listen interval\n");
 		u2ListenInterval = DEFAULT_LISTEN_INTERVAL;
@@ -748,25 +766,36 @@ assocCheckRxReAssocRspFrameStatus(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRf
 	UINT_16 u2RxStatusCode;
 	UINT_16 u2RxAssocId;
 
-	ASSERT(prSwRfb);
-	ASSERT(pu2StatusCode);
+	if (!prSwRfb || !pu2StatusCode) {
+		DBGLOG(SAA, ERROR, "Invalid parameter, ignore!\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	if ((prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen) < (CAP_INFO_FIELD_LEN +
 							     STATUS_CODE_FIELD_LEN + AID_FIELD_LEN)) {
-		ASSERT(0);
+		DBGLOG(SAA, WARN,
+		  "Invalid AssocRsp packet length. u2PacketLen(%u) u2HeaderLen(%u)\n",
+		  prSwRfb->u2PacketLen, prSwRfb->u2HeaderLen);
 		return WLAN_STATUS_FAILURE;
 	}
 
 	DBGLOG(SAA, LOUD, "prSwRfb->u2PayloadLength = %d\n", prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen);
 
 	prStaRec = cnmGetStaRecByIndex(prAdapter, prSwRfb->ucStaRecIdx);
-	ASSERT(prStaRec);
 
-	if (!prStaRec)
+	if (!prStaRec) {
+		DBGLOG(SAA, ERROR, "Invalid prStaRec, ignore!\n");
 		return WLAN_STATUS_INVALID_PACKET;
+	}
 
 	/* 4 <1> locate the (Re)Association Resp Frame. */
 	prAssocRspFrame = (P_WLAN_ASSOC_RSP_FRAME_T) prSwRfb->pvHeader;
+
+	/* if Association Response's BSSID doesn't match our target, ignore */
+	if (!EQUAL_MAC_ADDR(prAssocRspFrame->aucBSSID, prStaRec->aucMacAddr)) {
+		DBGLOG(SAA, INFO, "Unknown BSSID\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	/* 4 <2> Parse the Header of (Re)Association Resp Frame. */
 	/* WLAN_GET_FIELD_16(&prAssocRspFrame->u2FrameCtrl, &u2RxFrameCtrl); */
@@ -904,7 +933,7 @@ assocCheckRxReAssocRspFrameStatus(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRf
 * \return (none)
 */
 /*----------------------------------------------------------------------------*/
-__KAL_INLINE__ VOID
+static __KAL_INLINE__ VOID
 assocComposeDisassocFrame(IN P_STA_RECORD_T prStaRec,
 			  IN PUINT_8 pucBuffer, IN UINT_8 aucMACAddress[], IN UINT_16 u2ReasonCode)
 {
@@ -962,6 +991,8 @@ WLAN_STATUS assocSendDisAssocFrame(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T p
 	ASSERT(prStaRec);
 	ASSERT(prStaRec->ucBssIndex <= MAX_BSS_INDEX);
 
+	DBGLOG(RSN, INFO, "assocSendDisAssocFrame\n");
+
 	/* 4 <1> Allocate a PKT_INFO_T for Disassociation Frame */
 	/* Init with MGMT Header Length + Length of Fixed Fields + IE Length */
 	u2EstimatedFrameLen = MAC_TX_RESERVED_FIELD + WLAN_MAC_MGMT_HEADER_LEN + REASON_CODE_FIELD_LEN;
@@ -981,12 +1012,18 @@ WLAN_STATUS assocSendDisAssocFrame(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T p
 					     MAC_TX_RESERVED_FIELD), pucMacAddress, u2ReasonCode);
 
 #if CFG_SUPPORT_802_11W
+	/* AP PMF */
 	if (rsnCheckBipKeyInstalled(prAdapter, prStaRec)) {
-		P_WLAN_DISASSOC_FRAME_T prDisassocFrame;
+		/* PMF certification 4.3.3.1, 4.3.3.2 send unprotected deauth reason 6/7 */
+		if (prStaRec->rPmfCfg.fgRxDeauthResp != TRUE) {
 
-		prDisassocFrame = (P_WLAN_DISASSOC_FRAME_T) ((ULONG) (prMsduInfo->prPacket) + MAC_TX_RESERVED_FIELD);
+			P_WLAN_DISASSOC_FRAME_T prDisassocFrame;
 
-		prDisassocFrame->u2FrameCtrl |= MASK_FC_PROTECTED_FRAME;
+			prDisassocFrame =
+				(P_WLAN_DISASSOC_FRAME_T) ((ULONG) (prMsduInfo->prPacket) + MAC_TX_RESERVED_FIELD);
+
+			prDisassocFrame->u2FrameCtrl |= MASK_FC_PROTECTED_FRAME;
+		}
 	}
 #endif
 
@@ -1000,9 +1037,16 @@ WLAN_STATUS assocSendDisAssocFrame(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T p
 		     WLAN_MAC_MGMT_HEADER_LEN, WLAN_MAC_MGMT_HEADER_LEN + u2PayloadLen, NULL, MSDU_RATE_MODE_AUTO);
 
 #if CFG_SUPPORT_802_11W
+	/* AP PMF */
+	/* caution: access prStaRec only if true */
 	if (rsnCheckBipKeyInstalled(prAdapter, prStaRec)) {
-		/* DBGLOG(RSN, TRACE, ("Set MSDU_OPT_PROTECTED_FRAME\n")); */
-		nicTxConfigPktOption(prMsduInfo, MSDU_OPT_PROTECTED_FRAME, TRUE);
+		/* 4.3.3.1 send unprotected deauth reason 6/7 */
+		if (prStaRec->rPmfCfg.fgRxDeauthResp != TRUE) {
+			DBGLOG(RSN, INFO, "Disassoc Set MSDU_OPT_PROTECTED_FRAME\n");
+			nicTxConfigPktOption(prMsduInfo, MSDU_OPT_PROTECTED_FRAME, TRUE);
+		}
+
+		prStaRec->rPmfCfg.fgRxDeauthResp = FALSE;
 	}
 #endif
 
@@ -1032,16 +1076,19 @@ assocProcessRxDisassocFrame(IN P_ADAPTER_T prAdapter,
 	P_WLAN_DISASSOC_FRAME_T prDisassocFrame;
 	UINT_16 u2RxReasonCode;
 
-	ASSERT(prSwRfb);
-	ASSERT(aucBSSID);
-	ASSERT(pu2ReasonCode);
+	if (!prSwRfb || !aucBSSID || !pu2ReasonCode) {
+		DBGLOG(SAA, WARN, "Invalid parameters, ignore this pkt!\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	/* 4 <1> locate the Disassociation Frame. */
 	prDisassocFrame = (P_WLAN_DISASSOC_FRAME_T) prSwRfb->pvHeader;
 
 	/* 4 <2> Parse the Header of Disassociation Frame. */
 	if ((prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen) < REASON_CODE_FIELD_LEN) {
-		ASSERT(0);
+		DBGLOG(SAA, WARN,
+		  "Invalid DisAssoc packet length. u2PacketLen(%u) u2HeaderLen(%u)\n",
+		  prSwRfb->u2PacketLen, prSwRfb->u2HeaderLen);
 		return WLAN_STATUS_FAILURE;
 	}
 
@@ -1051,6 +1098,7 @@ assocProcessRxDisassocFrame(IN P_ADAPTER_T prAdapter,
 		       MAC2STR(prDisassocFrame->aucSrcAddr));
 		return WLAN_STATUS_FAILURE;
 	}
+
 	/* 4 <3> Parse the Fixed Fields of Deauthentication Frame Body. */
 	WLAN_GET_FIELD_16(&prDisassocFrame->u2ReasonCode, &u2RxReasonCode);
 	*pu2ReasonCode = u2RxReasonCode;
@@ -1090,11 +1138,13 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 	UINT_16 u2BSSBasicRateSet;
 	UINT_8 ucFixedFieldLength;
 	BOOLEAN fgIsUnknownBssBasicRate;
+	BOOLEAN fgIsHT = FALSE, fgIsTKIP = FALSE;
 	UINT_32 i;
 
-	ASSERT(prAdapter);
-	ASSERT(prSwRfb);
-	ASSERT(pu2StatusCode);
+	if (!prAdapter || !prSwRfb || !pu2StatusCode) {
+		DBGLOG(SAA, WARN, "Invalid parameters, ignore this pkt!\n");
+		return WLAN_STATUS_FAILURE;
+	}
 
 	prStaRec = cnmGetStaRecByIndex(prAdapter, prSwRfb->ucStaRecIdx);
 
@@ -1182,6 +1232,7 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 			break;
 		case ELEM_ID_HT_CAP:
 			prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_HT;
+			fgIsHT = TRUE;
 			break;
 		case ELEM_ID_VHT_CAP:
 			prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_VHT;
@@ -1190,7 +1241,7 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 #if CFG_ENABLE_WIFI_DIRECT && CFG_ENABLE_HOTSPOT_PRIVACY_CHECK
 			if (prAdapter->fgIsP2PRegistered && IS_STA_IN_P2P(prStaRec)) {
 				prIeRsn = RSN_IE(pucIE);
-				rsnParserCheckForRSNCCMPPSK(prAdapter, prIeRsn, &u2StatusCode);
+				rsnParserCheckForRSNCCMPPSK(prAdapter, prIeRsn, prStaRec, &u2StatusCode);
 				if (u2StatusCode != STATUS_CODE_SUCCESSFUL) {
 					*pu2StatusCode = u2StatusCode;
 					return WLAN_STATUS_SUCCESS;
@@ -1199,6 +1250,9 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 #endif
 			break;
 		case ELEM_ID_VENDOR:
+			if (p2pFuncParseCheckForTKIPInfoElem(pucIE))
+				fgIsTKIP = TRUE;
+
 #if CFG_ENABLE_WIFI_DIRECT
 			{
 				if ((prAdapter->fgIsP2PRegistered)) {
@@ -1213,6 +1267,14 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 				}
 			}
 #endif
+			break;
+		case ELEM_ID_IBSS_PARAM_SET:
+			/* Check IBSS parameter set length to avoid abnormal content */
+			if (IE_LEN(pucIE) != ELEM_MAX_LEN_IBSS_PARAMETER_SET) {
+				*pu2StatusCode = STATUS_CODE_UNSPECIFIED_FAILURE;
+				DBGLOG(SAA, WARN, "Invalid IBSS Parameter IE length!\n");
+				return WLAN_STATUS_FAILURE;
+			}
 			break;
 		default:
 			for (i = 0; i < (sizeof(rxAssocReqIETable) / sizeof(VERIFY_IE_ENTRY_T)); i++) {
@@ -1252,42 +1314,38 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 		prStaRec->u2OperationalRateSet = 0;
 		prStaRec->u2BSSBasicRateSet = 0;
 
-		if (prIeSupportedRate || prIeExtSupportedRate) {
-			/* Ignore any Basic Bit */
-			rateGetRateSetFromIEs(prIeSupportedRate, prIeExtSupportedRate,
-					      &prStaRec->u2OperationalRateSet, &u2BSSBasicRateSet,
-					      &fgIsUnknownBssBasicRate);
-
-			if ((prBssInfo->u2BSSBasicRateSet & prStaRec->u2OperationalRateSet) !=
-			    prBssInfo->u2BSSBasicRateSet) {
-
-				u2StatusCode = STATUS_CODE_ASSOC_DENIED_RATE_NOT_SUPPORTED;
-				break;
-			}
-
-			/* Accpet the Sta, update BSSBasicRateSet from Bss */
-
-			prStaRec->u2BSSBasicRateSet = prBssInfo->u2BSSBasicRateSet;
-
-			prStaRec->u2DesiredNonHTRateSet = (prStaRec->u2OperationalRateSet & RATE_SET_ALL_ABG);
-
-			if (HAL_RX_STATUS_GET_RF_BAND(prSwRfb->prRxStatus) == BAND_2G4) {
-				if (prStaRec->u2OperationalRateSet & RATE_SET_OFDM)
-					prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_ERP;
-				if (prStaRec->u2OperationalRateSet & RATE_SET_HR_DSSS)
-					prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_HR_DSSS;
-			} else {	/* (BAND_5G == prBssDesc->eBande) */
-				if (prStaRec->u2OperationalRateSet & RATE_SET_OFDM)
-					prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_OFDM;
-			}
-
-			/* Update default Tx rate */
-			nicTxUpdateStaRecDefaultRate(prStaRec);
-		} else {
-			ASSERT(0);
+		if (!prIeSupportedRate) {
+			DBGLOG(SAA, WARN, "Supported Rate IE not present!\n");
 			u2StatusCode = STATUS_CODE_ASSOC_DENIED_RATE_NOT_SUPPORTED;
 			break;
 		}
+		/* Ignore any Basic Bit */
+		rateGetRateSetFromIEs(prIeSupportedRate, prIeExtSupportedRate,
+				      &prStaRec->u2OperationalRateSet, &u2BSSBasicRateSet,
+				      &fgIsUnknownBssBasicRate);
+
+		if ((prBssInfo->u2BSSBasicRateSet & prStaRec->u2OperationalRateSet) !=
+		    prBssInfo->u2BSSBasicRateSet) {
+			u2StatusCode = STATUS_CODE_ASSOC_DENIED_RATE_NOT_SUPPORTED;
+			DBGLOG(SAA, WARN, "Basic rate not supported!\n");
+			break;
+		}
+
+		/* Accpet the Sta, update BSSBasicRateSet from Bss */
+		prStaRec->u2BSSBasicRateSet = prBssInfo->u2BSSBasicRateSet;
+		prStaRec->u2DesiredNonHTRateSet = (prStaRec->u2OperationalRateSet & RATE_SET_ALL_ABG);
+
+		if (HAL_RX_STATUS_GET_RF_BAND(prSwRfb->prRxStatus) == BAND_2G4) {
+			if (prStaRec->u2OperationalRateSet & RATE_SET_OFDM)
+				prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_ERP;
+			if (prStaRec->u2OperationalRateSet & RATE_SET_HR_DSSS)
+				prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_HR_DSSS;
+		} else {	/* (BAND_5G == prBssDesc->eBande) */
+			if (prStaRec->u2OperationalRateSet & RATE_SET_OFDM)
+				prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_OFDM;
+		}
+		/* Update default Tx rate */
+		nicTxUpdateStaRecDefaultRate(prStaRec);
 
 #if CFG_ENABLE_WIFI_DIRECT && CFG_ENABLE_HOTSPOT_PRIVACY_CHECK
 		if (prAdapter->fgIsP2PRegistered && IS_STA_IN_P2P(prStaRec)) {
@@ -1326,7 +1384,12 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 			prStaRec->u2AssocReqIeLen = u2IELength;
 			if (u2IELength) {
 				prStaRec->pucAssocReqIe = kalMemAlloc(u2IELength, VIR_MEM_TYPE);
-				kalMemCopy(prStaRec->pucAssocReqIe, cp, u2IELength);
+
+				if (prStaRec->pucAssocReqIe)
+					kalMemCopy(prStaRec->pucAssocReqIe, cp, u2IELength);
+				else
+					DBGLOG(SAA, LOUD,
+						"allocate memory for prStaRec->pucAssocReqIe failed!\n");
 			}
 		}
 #endif
@@ -1335,6 +1398,9 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 				      prStaRec->ucBssIndex);
 	}
 #endif
+
+	if (fgIsHT && fgIsTKIP && prBssInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT)
+		u2StatusCode = STATUS_CODE_REQ_DECLINED;
 
 	*pu2StatusCode = u2StatusCode;
 
@@ -1353,7 +1419,7 @@ WLAN_STATUS assocProcessRxAssocReqFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T 
 * @return (none)
 */
 /*----------------------------------------------------------------------------*/
-__KAL_INLINE__ VOID
+static __KAL_INLINE__ VOID
 assocBuildReAssocRespFrameCommonIEs(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo, IN P_BSS_INFO_T prBssInfo)
 {
 	PUINT_8 pucBuffer;
@@ -1415,7 +1481,7 @@ assocBuildReAssocRespFrameCommonIEs(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T p
 * @return (none)
 */
 /*----------------------------------------------------------------------------*/
-__KAL_INLINE__ VOID
+static __KAL_INLINE__ VOID
 assocComposeReAssocRespFrameHeaderAndFF(IN P_STA_RECORD_T prStaRec,
 					IN PUINT_8 pucBuffer,
 					IN UINT_8 aucBSSID[], IN UINT_16 u2CapInfo, IN OUT PUINT_16 pu2PayloadLen)

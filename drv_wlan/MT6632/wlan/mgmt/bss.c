@@ -133,6 +133,9 @@ APPEND_VAR_IE_ENTRY_T txBcnIETable[] = {
 #if CFG_SUPPORT_MTK_SYNERGY
 	, {(ELEM_HDR_LEN + ELEM_MIN_LEN_MTK_OUI), NULL, rlmGenerateMTKOuiIE}	/* 221 */
 #endif
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	, {(ELEM_HDR_LEN + ELEM_MIN_LEN_CSA), NULL, rlmGenerateCsaIE}            /* 37 */
+#endif
 
 };
 
@@ -1199,7 +1202,7 @@ bssSendBeaconProbeResponse(IN P_ADAPTER_T prAdapter,
 	TX_SET_MMPDU(prAdapter,
 		     prMsduInfo,
 		     ucBssIndex,
-		     STA_REC_INDEX_BMCAST,
+		     STA_REC_INDEX_NOT_FOUND,
 		     WLAN_MAC_MGMT_HEADER_LEN,
 		     (WLAN_MAC_MGMT_HEADER_LEN + TIMESTAMP_FIELD_LEN + BEACON_INTERVAL_FIELD_LEN +
 		      CAP_INFO_FIELD_LEN), NULL, MSDU_RATE_MODE_AUTO);
@@ -1215,6 +1218,10 @@ bssSendBeaconProbeResponse(IN P_ADAPTER_T prAdapter,
 			prIeArray[i].pfnAppendIE(prAdapter, prMsduInfo);
 
 	}
+
+	/* Set limited retry count and lifetime for Probe Resp is reasonable */
+	nicTxSetPktLifeTime(prMsduInfo, 100);
+	nicTxSetPktRetryLimit(prMsduInfo, 2);
 
 	/* TODO(Kevin): Also release the unused tail room of the composed MMPDU */
 
@@ -1261,9 +1268,6 @@ WLAN_STATUS bssProcessProbeRequest(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwR
 
 	/* 4 <2> Check network conditions before reply Probe Response Frame (Consider Concurrent) */
 	for (ucBssIndex = 0; ucBssIndex <= P2P_DEV_BSS_INDEX; ucBssIndex++) {
-
-		if ((ucBssIndex >= BSS_INFO_NUM) && (ucBssIndex != P2P_DEV_BSS_INDEX))
-			continue;
 
 		if (!IS_NET_ACTIVE(prAdapter, ucBssIndex))
 			continue;

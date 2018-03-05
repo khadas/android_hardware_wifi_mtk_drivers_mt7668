@@ -1,4 +1,4 @@
-
+#ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF),)
 export CONFIG_MTK_COMBO_WIFI_HIF=sdio
 export MTK_COMBO_CHIP=MT6632
 export CONFIG_MTK_WIFI_ONLY=m
@@ -8,10 +8,11 @@ export CONFIG_MTK_COMBO_COMM=m
 export CONFIG_MTK_COMBO_COMM_UART=m
 export CONFIG_MTK_COMBO_COMM_SDIO=m
 export CONFIG_MT_WIFI_CHRDEV=m
+export MODULE_NAME=wlan_mt76x8_sdio
 
-ccflags-y += -DCFG_NUM_DIFFERENT_CHANNELS_STA=1 -DCFG_NUM_DIFFERENT_CHANNELS_P2P=1 -DCFG_DRIVER_INITIAL_RUNNING_MODE=3 -DCFG_ENABLE_WAKE_LOCK=0 -DCFG_DEFAULT_DBG_LEVEL=0x7 -DCFG_USB_REQ_TX_DATA_CNT=4 -DCFG_USB_REQ_RX_DATA_CNT=2 -DCFG_ENABLE_EFUSE_MAC_ADDR=1 -DCFG_DRIVER_INF_NAME_CHANGE
-EXTRA_LDFLAGS += --strip-debug
-
+ccflags-y += -DCFG_NUM_DIFFERENT_CHANNELS_STA=1 -DCFG_NUM_DIFFERENT_CHANNELS_P2P=1 -DCFG_DRIVER_INITIAL_RUNNING_MODE=3 -DCFG_ENABLE_WAKE_LOCK=0 -DCFG_DEFAULT_DBG_LEVEL=0x7 -DCFG_USB_REQ_TX_DATA_CNT=4 -DCFG_USB_REQ_RX_DATA_CNT=2 -DCFG_ENABLE_EFUSE_MAC_ADDR=1 -DCFG_DRIVER_INF_NAME_CHANGE -DCFG_SUPPORT_SINGLE_SKU_LOCAL_DB=1
+#endif
+ccflags-y  += -DCUSTOMER_CCN7
 # ---------------------------------------------------
 # Compile Options
 # ---------------------------------------------------
@@ -19,7 +20,9 @@ WLAN_CHIP_LIST:=-UMT6620 -UMT6628 -UMT5931 -UMT6630 -UMT6632
 ccflags-y += $(WLAN_CHIP_LIST)
 
 #WLAN_CHIP_ID=$(MTK_COMBO_CHIP)
-WLAN_CHIP_ID=MT6632
+ifeq ($(WLAN_CHIP_ID),)
+    WLAN_CHIP_ID := MT6632
+endif
 
 ccflags-y += -DCFG_SUPPORT_DEBUG_FS=0
 ccflags-y += -DWLAN_INCLUDE_PROC
@@ -69,6 +72,18 @@ else ifeq ($(CONFIG_MTK_COMBO_WIFI_HIF), usb)
 else
     $(error Unsuppoted HIF=$(CONFIG_MTK_COMBO_WIFI_HIF)!!)
 endif
+
+ifneq ($(CFG_CFG80211_VERSION),)
+VERSION_STR = $(subst ",,$(subst ., , $(subst -, ,$(subst v,,$(CFG_CFG80211_VERSION)))))
+$(info VERSION_STR=$(VERSION_STR))
+X = $(firstword $(VERSION_STR))
+Y = $(word 2 ,$(VERSION_STR))
+Z = $(word 3 ,$(VERSION_STR))
+VERSION := $(shell echo "$$(( $X * 65536 + $Y * 256 + $Z))" )
+ccflags-y += -DCFG_CFG80211_VERSION=$(VERSION)
+$(info DCFG_CFG80211_VERSION=$(VERSION))
+endif
+
 $(info HIF=$(CONFIG_MTK_COMBO_WIFI_HIF))
 
 ifeq ($(CONFIG_MTK_PASSPOINT_R1_SUPPORT), y)
@@ -101,7 +116,7 @@ else
 endif
 
 ifeq ($(MODULE_NAME),)
-	MODULE_NAME := wlan_mt76x8_sdio
+	MODULE_NAME := wlan_$(shell echo $(strip $(WLAN_CHIP_ID)) | tr A-Z a-z)_$(CONFIG_MTK_COMBO_WIFI_HIF)
 endif
 
 ccflags-y += -DDBG=0
@@ -228,7 +243,8 @@ MGMT_OBJS += $(MGMT_DIR)p2p_dev_fsm.o\
             $(MGMT_DIR)p2p_rlm.o\
             $(MGMT_DIR)p2p_assoc.o\
             $(MGMT_DIR)p2p_bss.o\
-            $(MGMT_DIR)p2p_rlm_obss.o
+            $(MGMT_DIR)p2p_rlm_obss.o\
+            $(MGMT_DIR)p2p_fsm.o
 
 MGMT_OBJS += $(MGMT_DIR)wapi.o
 
@@ -253,5 +269,14 @@ $(MODULE_NAME)-objs  += $(HIF_OBJS)
 $(MODULE_NAME)-objs  += $(MGMT_OBJS)
 $(MODULE_NAME)-objs  += $(CHIPS_OBJS)
 
-strip:
-	$(CROSS_COMPILE)strip $(MODULE_NAME).ko --strip-unneeded
+#
+# mtprealloc
+#
+ifeq ($(CONFIG_MTK_PREALLOC_MEMORY), y)
+ccflags-y += -DCFG_PREALLOC_MEMORY
+ccflags-y += -I$(src)/prealloc/include
+MODULE_NAME_PREALLOC = $(MODULE_NAME)_prealloc
+PREALLOC_OBJS := prealloc/prealloc.o
+$(MODULE_NAME_PREALLOC)-objs += $(PREALLOC_OBJS)
+obj-m += $(MODULE_NAME_PREALLOC).o
+endif

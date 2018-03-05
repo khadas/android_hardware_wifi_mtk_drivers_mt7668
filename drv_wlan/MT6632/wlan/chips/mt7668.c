@@ -75,10 +75,11 @@
 */
 
 ECO_INFO_T mt7668_eco_table[] = {
-	/* HW version,  ROM version,    Factory version */
-	{0x00, 0x00, 0xA},	/* E1 */
-	{0x10, 0x01, 0xB},	/* E2 */
-	{0x00, 0x00, 0x0}	/* End of table */
+	/* HW version,  ROM version,    Factory version, Eco version */
+	{0x00, 0x00, 0xA, 0x1},	/* E1 */
+	{0x10, 0x01, 0xB, 0x2},	/* E2 */
+	{0x11, 0x01, 0xB, 0x2},	/* E2 */
+	{0x00, 0x00, 0x0, 0x0}	/* End of table */
 };
 
 /*******************************************************************************
@@ -134,6 +135,7 @@ struct mt66xx_chip_info mt66xx_chip_info_mt7668 = {
 	.is_pcie_32dw_read = MT7668_IS_PCIE_32DW_READ, /* Litien */
 	.eco_info = mt7668_eco_table,
 	.constructFirmwarePrio = mt7668ConstructFirmwarePrio,
+	.features = 0,
 };
 
 struct mt66xx_hif_driver_data mt66xx_driver_data_mt7668 = {

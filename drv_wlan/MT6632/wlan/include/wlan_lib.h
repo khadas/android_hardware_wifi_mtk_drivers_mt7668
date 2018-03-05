@@ -125,8 +125,9 @@
 
 #define NUM_TC_RESOURCE_TO_STATISTICS       4
 
-#define WLAN_CFG_ARGV_MAX 8
-#define WLAN_CFG_ENTRY_NUM_MAX 128
+#define WLAN_CFG_ARGV_MAX 23
+#define WLAN_CFG_ARGV_MAX_LONG 22 /* for WOW, 2+20 */
+#define WLAN_CFG_ENTRY_NUM_MAX 200 /* 128 */
 #define WLAN_CFG_KEY_LEN_MAX 32	/* include \x00  EOL */
 #define WLAN_CFG_VALUE_LEN_MAX 32	/* include \x00 EOL */
 #define WLAN_CFG_FLAG_SKIP_CB BIT(0)
@@ -140,7 +141,9 @@
 #define WLAN_CFG_SET_DEBUG_LEVEL_LEN_MAX 10
 #define WLAN_CFG_SET_SW_CTRL_LEN_MAX 10
 
+
 #define WLAN_OID_TIMEOUT_THRESHOLD                  2000	/* OID timeout (in ms) */
+#define WLAN_OID_TIMEOUT_THRESHOLD_MAX             10000	/* OID max timeout (in ms) */
 #define WLAN_OID_TIMEOUT_THRESHOLD_IN_RESETTING      300	/* OID timeout during chip-resetting  (in ms) */
 
 #define WLAN_OID_NO_ACK_THRESHOLD                   3
@@ -186,6 +189,23 @@
 #define ED_ITEMTYPE_SITE	0
 #define ED_STRING_SITE		1
 #define ED_VALUE_SITE		2
+#endif
+
+#if CFG_AUTO_CHANNEL_SEL_SUPPORT
+#define ACS_AP_RSSI_LEVEL_HIGH -50
+#define ACS_AP_RSSI_LEVEL_LOW -80
+#define ACS_DIRTINESS_LEVEL_HIGH 52
+#define ACS_DIRTINESS_LEVEL_MID 40
+#define ACS_DIRTINESS_LEVEL_LOW 32
+#endif
+
+#if CFG_WOW_SUPPORT
+#define INVALID_WOW_WAKE_UP_REASON 255
+#endif
+
+#if CFG_SUPPORT_ADVANCE_CONTROL
+#define KEEP_FULL_PWR_TRAFFIC_REPORT_BIT BIT(0)
+#define KEEP_FULL_PWR_NOISE_HISTOGRAM_BIT BIT(1)
 #endif
 
 typedef enum _CMD_VER_T {
@@ -453,12 +473,25 @@ typedef struct _WOW_WAKE_HIF_T {
 	UINT_8		aucResv[5];
 } WOW_WAKE_HIF_T, *P_WOW_WAKE_HIF_T;
 
+typedef struct _WOW_PORT_T {
+	UINT_8 ucIPv4UdpPortCnt;
+	UINT_8 ucIPv4TcpPortCnt;
+	UINT_8 ucIPv6UdpPortCnt;
+	UINT_8 ucIPv6TcpPortCnt;
+	UINT_16 ausIPv4UdpPort[MAX_TCP_UDP_PORT];
+	UINT_16 ausIPv4TcpPort[MAX_TCP_UDP_PORT];
+	UINT_16 ausIPv6UdpPort[MAX_TCP_UDP_PORT];
+	UINT_16 ausIPv6TcpPort[MAX_TCP_UDP_PORT];
+} WOW_PORT_T, *P_WOW_PORT_T;
+
 typedef struct _WOW_CTRL_T {
-	BOOLEAN fgEnable;	/* Reserved, but not use now */
+	UINT_8 fgWowEnable;	/* 0: disable, 1: wow enable */
 	UINT_8 ucScenarioId;	/* just a profile ID */
 	UINT_8 ucBlockCount;
 	UINT_8 aucReserved1[1];
 	WOW_WAKE_HIF_T astWakeHif[2];
+	WOW_PORT_T stWowPort;
+	UINT_8 ucReason;
 } WOW_CTRL_T, *P_WOW_CTRL_T;
 
 #endif
@@ -752,9 +785,11 @@ typedef struct _PARAM_GET_STA_STATISTICS {
 	TX_VECTOR_BBP_LATCH_T rTxVector[ENUM_BAND_NUM];
 	MIB_INFO_STAT_T rMibInfo[ENUM_BAND_NUM];
 	UINT_8 ucResetCounter;
+	BOOLEAN fgIsForceTxStream;
+	BOOLEAN fgIsForceSeOff;
 
 	/* Reserved fields */
-	UINT_8 au4Reserved[22];
+	UINT_8 au4Reserved[20];
 } PARAM_GET_STA_STA_STATISTICS, *P_PARAM_GET_STA_STATISTICS;
 
 typedef struct _PARAM_GET_BSS_STATISTICS {
@@ -891,6 +926,14 @@ typedef enum _ENUM_TX_PROFILING_TAG_T {
 	TX_PROF_TAG_DRV_TX_DONE,
 	TX_PROF_TAG_MAC_TX_DONE
 } ENUM_TX_PROFILING_TAG_T, *P_ENUM_TX_PROFILING_TAG_T;
+
+enum ENUM_WF_PATH_FAVOR_T {
+	ENUM_WF_NON_FAVOR = 0xff,
+	ENUM_WF_0_ONE_STREAM_PATH_FAVOR = 0,
+	ENUM_WF_1_ONE_STREAM_PATH_FAVOR = 1,
+	ENUM_WF_0_1_TWO_STREAM_PATH_FAVOR = 2,
+	ENUM_WF_0_1_DUP_STREAM_PATH_FAVOR = 3,
+};
 
 /*******************************************************************************
 *                            P U B L I C   D A T A
@@ -1033,13 +1076,15 @@ WLAN_STATUS wlanSendDummyCmd(IN P_ADAPTER_T prAdapter, IN BOOLEAN fgIsReqTxRsrc)
 
 WLAN_STATUS wlanSendNicPowerCtrlCmd(IN P_ADAPTER_T prAdapter, IN UINT_8 ucPowerMode);
 
+WLAN_STATUS wlanKeepFullPwr(IN P_ADAPTER_T prAdapter, IN BOOLEAN fgEnable);
+
 BOOLEAN wlanIsHandlerAllowedInRFTest(IN PFN_OID_HANDLER_FUNC pfnOidHandler, IN BOOLEAN fgSetInfo);
 
 WLAN_STATUS wlanProcessQueuedSwRfb(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfbListHead);
 
 WLAN_STATUS wlanProcessQueuedMsduInfo(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfoListHead);
 
-BOOLEAN wlanoidTimeoutCheck(IN P_ADAPTER_T prAdapter, IN PFN_OID_HANDLER_FUNC pfnOidHandler);
+BOOLEAN wlanoidTimeoutCheck(IN P_ADAPTER_T prAdapter, IN PFN_OID_HANDLER_FUNC pfnOidHandler, IN UINT_32 u4Timeout);
 
 VOID wlanoidClearTimeoutCheck(IN P_ADAPTER_T prAdapter);
 
@@ -1223,14 +1268,20 @@ wlanCfgSetCb(IN P_ADAPTER_T prAdapter, const PCHAR pucKey, WLAN_CFG_SET_CB pfSet
 
 WLAN_STATUS wlanCfgParse(IN P_ADAPTER_T prAdapter, PUINT_8 pucConfigBuf, UINT_32 u4ConfigBufLen, BOOLEAN isFwConfig);
 VOID wlanFeatureToFw(IN P_ADAPTER_T prAdapter);
+#endif
+
 VOID wlanLoadDefaultCustomerSetting(IN P_ADAPTER_T prAdapter);
 
 
-#endif
+
 
 WLAN_STATUS wlanCfgInit(IN P_ADAPTER_T prAdapter, PUINT_8 pucConfigBuf, UINT_32 u4ConfigBufLen, UINT_32 u4Flags);
 
 WLAN_STATUS wlanCfgParseArgument(CHAR *cmdLine, INT_32 *argc, CHAR *argv[]);
+
+#if CFG_WOW_SUPPORT
+WLAN_STATUS wlanCfgParseArgumentLong(CHAR *cmdLine, INT_32 *argc, CHAR *argv[]);
+#endif
 
 INT_32 wlanHexToNum(CHAR c);
 INT_32 wlanHexToByte(PCHAR hex);
@@ -1238,6 +1289,13 @@ INT_32 wlanHexToByte(PCHAR hex);
 INT_32 wlanHwAddrToBin(PCHAR txt, UINT_8 *addr);
 
 BOOLEAN wlanIsChipNoAck(IN P_ADAPTER_T prAdapter);
+
+BOOLEAN wlanIsChipRstRecEnabled(IN P_ADAPTER_T prAdapter);
+
+BOOLEAN wlanIsChipAssert(IN P_ADAPTER_T prAdapter);
+
+VOID wlanChipRstPreAct(IN P_ADAPTER_T prAdapter);
+
 
 VOID wlanTxProfilingTagPacket(IN P_ADAPTER_T prAdapter, IN P_NATIVE_PACKET prPacket, IN ENUM_TX_PROFILING_TAG_T eTag);
 
@@ -1304,7 +1362,21 @@ VOID wlanClearPendingInterrupt(IN P_ADAPTER_T prAdapter);
 extern INT_32 mtk_wcn_wmt_wifi_fem_cfg_report(PVOID pvInfoBuf);
 #endif
 
-UINT_8 wlanGetSpeIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex);
+UINT_8  wlanGetAntPathType(IN P_ADAPTER_T prAdapter, IN enum ENUM_WF_PATH_FAVOR_T eWfPathFavor);
+
+UINT_8 wlanGetSpeIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex, IN enum ENUM_WF_PATH_FAVOR_T eWfPathFavor);
 
 UINT_8 wlanGetSupportNss(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex);
+
+INT_32 wlanGetFileContent(P_ADAPTER_T prAdapter,
+	const PUINT_8 pcFileName, PUINT_8 pucBuf,
+	UINT_32 u4MaxFileLen, PUINT_32 pu4ReadFileLen, BOOL bReqFw);
+
+#if CFG_SUPPORT_ANT_SELECT
+WLAN_STATUS wlanUpdateExtInfo(IN P_ADAPTER_T prAdapter);
+#endif
+
+int wlanSuspendRekeyOffload(P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRekeyMode);
+VOID wlanSuspendPmHandle(P_GLUE_INFO_T prGlueInfo);
+VOID wlanResumePmHandle(P_GLUE_INFO_T prGlueInfo);
 

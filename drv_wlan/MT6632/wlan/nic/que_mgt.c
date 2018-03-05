@@ -230,7 +230,7 @@ do { \
 * \return (none)
 */
 /*----------------------------------------------------------------------------*/
-VOID qmInit(IN P_ADAPTER_T prAdapter)
+VOID qmInit(IN P_ADAPTER_T prAdapter, IN BOOLEAN isTxResrouceControlEn)
 {
 	UINT_32 u4Idx;
 #if QM_ADAPTIVE_TC_RESOURCE_CTRL
@@ -272,6 +272,8 @@ VOID qmInit(IN P_ADAPTER_T prAdapter)
 	prQM->ucRxBaCount = 0;
 
 	kalMemSet(&g_arMissTimeout, 0, sizeof(g_arMissTimeout));
+
+	prQM->fgIsTxResrouceControlEn = isTxResrouceControlEn;
 
 #if QM_ADAPTIVE_TC_RESOURCE_CTRL
 	/* 4 <4> Initialize TC resource control variables */
@@ -523,15 +525,21 @@ VOID qmActivateStaRec(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec)
 VOID qmDeactivateStaRec(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec)
 {
 	UINT_32 i;
-	P_MSDU_INFO_T prFlushedTxPacketList = NULL;
 
 	if (!prStaRec)
 		return;
 	/* 4 <1> Flush TX queues */
-	prFlushedTxPacketList = qmFlushStaTxQueues(prAdapter, prStaRec->ucIndex);
+	if (HAL_IS_TX_DIRECT(prAdapter)) {
+		nicTxDirectClearStaPsQ(prAdapter, prStaRec->ucIndex);
+	} else {
+		P_MSDU_INFO_T prFlushedTxPacketList = NULL;
 
-	if (prFlushedTxPacketList)
-		wlanProcessQueuedMsduInfo(prAdapter, prFlushedTxPacketList);
+		prFlushedTxPacketList = qmFlushStaTxQueues(prAdapter, prStaRec->ucIndex);
+
+		if (prFlushedTxPacketList)
+			wlanProcessQueuedMsduInfo(prAdapter, prFlushedTxPacketList);
+	}
+
 	/* 4 <2> Flush RX queues and delete RX BA agreements */
 	for (i = 0; i < CFG_RX_MAX_BA_TID_NUM; i++) {
 		/* Delete the RX BA entry with TID = i */
@@ -812,6 +820,10 @@ P_QUE_T qmDetermineStaTxQueue(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduI
 	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, prMsduInfo->ucBssIndex);
 	prStaRec = QM_GET_STA_REC_PTR_FROM_INDEX(prAdapter, prMsduInfo->ucStaRecIndex);
 
+	if (!prStaRec) {
+		DBGLOG(QM, ERROR, "prStaRec is null.\n");
+		return NULL;
+	}
 	if (prMsduInfo->ucUserPriority < 8) {
 		QM_DBG_CNT_INC(&prAdapter->rQM, prMsduInfo->ucUserPriority + 15);
 		/* QM_DBG_CNT_15 *//* QM_DBG_CNT_16 *//* QM_DBG_CNT_17 *//* QM_DBG_CNT_18 */
@@ -849,6 +861,11 @@ P_QUE_T qmDetermineStaTxQueue(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduI
 
 	} while (fgCheckACMAgain);
 
+	if (ucQueIdx >= NUM_OF_PER_STA_TX_QUEUES) {
+		DBGLOG(QM, ERROR,
+		       "ucQueIdx = %u, needs 0~3 to avoid out-of-bounds.\n", ucQueIdx);
+		return NULL;
+	}
 	if (prStaRec->fgIsTxAllowed) {
 		/* non protected BSS or protected BSS with key set */
 		prTxQue = prStaRec->aprTargetQueue[ucQueIdx];
@@ -1294,10 +1311,12 @@ qmDequeueTxPacketsFromPerStaQueues(IN P_ADAPTER_T prAdapter, OUT P_QUE_T prQue,
 				if (u4MaxForwardFrameCountLimit > prBssInfo->ucBssFreeQuota)
 					u4MaxForwardFrameCountLimit = prBssInfo->ucBssFreeQuota;
 			}
+
 #if CFG_SUPPORT_DBDC
-			if (prAdapter->rWifiVar.uDeQuePercentEnable && prAdapter->rWifiVar.fgDbDcModeEn)
+			if (prAdapter->rWifiVar.fgDbDcModeEn)
 				u4MaxResourceLimit = gmGetDequeueQuota(prAdapter, prStaRec, prBssInfo, u4TotalQuota);
 #endif
+
 			/* 4 <2.3> Dequeue packet */
 			/* Three cases to break: (1) No resource (2) No packets (3) Fairness */
 			while (!QUEUE_IS_EMPTY(prCurrQueue)) {
@@ -2123,9 +2142,16 @@ VOID qmDoAdaptiveTcResourceCtrl(IN P_ADAPTER_T prAdapter)
 VOID qmCheckForFastTcResourceCtrl(IN P_ADAPTER_T prAdapter, IN UINT_8 ucTc)
 {
 	P_QUE_MGT_T prQM = &prAdapter->rQM;
+	BOOLEAN fgTrigger = FALSE;
 
 	/* Trigger TC resource adjustment if there is a requirement coming for a empty TC */
-	if (!prQM->au4CurrentTcResource[ucTc]) {
+	if (!prAdapter->rTxCtrl.rTc.au4FreeBufferCount[ucTc]) {
+		if (!prQM->au4CurrentTcResource[ucTc] ||
+			nicTxGetAdjustableResourceCnt(prAdapter))
+			fgTrigger = TRUE;
+	}
+
+	if (fgTrigger) {
 		prQM->u4TimeToUpdateQueLen = 1;
 		prQM->u4TimeToAdjustTcResource = 1;
 		prQM->fgTcResourceFastReaction = TRUE;
@@ -2147,6 +2173,12 @@ gmGetDequeueQuota(
 {
 	UINT_32	u4Weight = 100;
 	UINT_32	u4Quota;
+
+	P_QUE_MGT_T prQM = &prAdapter->rQM;
+
+	if ((prAdapter->rWifiVar.uDeQuePercentEnable == FALSE) ||
+		(prQM->fgIsTxResrouceControlEn == FALSE))
+		return u4TotalQuota;
 
 	if (prStaRec->ucDesiredPhyTypeSet & PHY_TYPE_BIT_VHT) {
 		if (prBssInfo->ucVhtChannelWidth > VHT_OP_CHANNEL_WIDTH_20_40) {
@@ -2217,6 +2249,10 @@ P_SW_RFB_T qmHandleRxPackets(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfbList
 	PUINT_8 pucEthDestAddr;
 	BOOLEAN fgIsBMC, fgIsHTran;
 	BOOLEAN fgMicErr;
+#if CFG_SUPPORT_REPLAY_DETECTION
+	UINT_8 ucBssIndexRly = 0;
+	P_BSS_INFO_T prBssInfoRly = NULL;
+#endif
 
 	/* DbgPrint("QM: Enter qmHandleRxPackets()\n"); */
 
@@ -2373,6 +2409,29 @@ P_SW_RFB_T qmHandleRxPackets(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfbList
 
 
 		/* Todo:: Move the data class error check here */
+
+#if CFG_SUPPORT_REPLAY_DETECTION
+		if (prCurrSwRfb->prStaRec) {
+			ucBssIndexRly = prCurrSwRfb->prStaRec->ucBssIndex;
+			prBssInfoRly = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndexRly);
+			if (!IS_BSS_ACTIVE(prBssInfoRly)) {
+				DBGLOG(QM, INFO,
+					"Mark NULL the Packet for inactive Bss %u\n",
+					ucBssIndexRly);
+				prCurrSwRfb->eDst = RX_PKT_DESTINATION_NULL;
+				QUEUE_INSERT_TAIL(prReturnedQue, (P_QUE_ENTRY_T) prCurrSwRfb);
+				continue;
+			}
+			if (fgIsBMC
+				&& prBssInfoRly
+				&& (IS_BSS_AIS(prBssInfoRly) || IS_BSS_P2P(prBssInfoRly))
+				&& qmHandleRxReplay(prAdapter, prCurrSwRfb)) {
+				prCurrSwRfb->eDst = RX_PKT_DESTINATION_NULL;
+				QUEUE_INSERT_TAIL(prReturnedQue, (P_QUE_ENTRY_T) prCurrSwRfb);
+				continue;
+			}
+		}
+#endif
 
 		if (prCurrSwRfb->fgReorderBuffer && !fgIsBMC && fgIsHTran) {
 			/* If this packet should dropped or indicated to the host immediately,
@@ -4468,6 +4527,12 @@ UINT_32 mqmGenerateWmmParamIEByParam(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBssIn
 		WMM_ACI_AC_VO
 	};
 
+	P_AC_QUE_PARMS_T prACQueParms;
+	UINT_8 auCWminLog2ForBcast[WMM_AC_INDEX_NUM] = { 4 /*BE*/, 4 /*BK*/, 3 /*VO*/, 2 /*VI*/ };
+	UINT_8 auCWmaxLog2ForBcast[WMM_AC_INDEX_NUM] = { 10, 10, 4, 3 };
+	UINT_8 auAifsForBcast[WMM_AC_INDEX_NUM] = { 3, 7, 2, 2 };
+	UINT_8 auTxopForBcast[WMM_AC_INDEX_NUM] = { 0, 0, 94, 47 };	/* If the AP is OFDM */
+
 	ENUM_WMM_ACI_T eAci;
 	P_WMM_AC_PARAM_T prAcParam;
 
@@ -4483,6 +4548,28 @@ UINT_32 mqmGenerateWmmParamIEByParam(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBssIn
 	if (!prBssInfo->fgIsQBSS)
 		return WLAN_STATUS_SUCCESS;
 
+	if (IS_FEATURE_ENABLED(prAdapter->rWifiVar.fgTdlsBufferSTASleep)) {
+		prACQueParms = prBssInfo->arACQueParmsForBcast;
+
+		for (eAci = 0; eAci < WMM_AC_INDEX_NUM; eAci++) {
+			prACQueParms[eAci].ucIsACMSet = FALSE;
+			prACQueParms[eAci].u2Aifsn = auAifsForBcast[eAci];
+			prACQueParms[eAci].u2CWmin = BIT(auCWminLog2ForBcast[eAci]) - 1;
+			prACQueParms[eAci].u2CWmax = BIT(auCWmaxLog2ForBcast[eAci]) - 1;
+			prACQueParms[eAci].u2TxopLimit = auTxopForBcast[eAci];
+
+			/* used to send WMM IE */
+			prBssInfo->aucCWminLog2ForBcast[eAci] = auCWminLog2ForBcast[eAci];
+			prBssInfo->aucCWmaxLog2ForBcast[eAci] = auCWmaxLog2ForBcast[eAci];
+
+			/* DBGLOG(TDLS, INFO, "eAci = %d, ACM = %d, Aifsn = %d, CWmin = %d, CWmax = %d,
+			*	TxopLimit = %d\n",
+			*	eAci, prACQueParms[eAci].ucIsACMSet, prACQueParms[eAci].u2Aifsn,
+			*	prACQueParms[eAci].u2CWmin, prACQueParms[eAci].u2CWmax, prACQueParms[eAci].u2TxopLimit);
+			*/
+		}
+	}
+
 	prIeWmmParam = (P_IE_WMM_PARAM_T) pOutBuf;
 
 	prIeWmmParam->ucId = ELEM_ID_WMM;
@@ -4496,7 +4583,14 @@ UINT_32 mqmGenerateWmmParamIEByParam(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBssIn
 	prIeWmmParam->ucOuiSubtype = VENDOR_OUI_SUBTYPE_WMM_PARAM;
 
 	prIeWmmParam->ucVersion = VERSION_WMM;
-	prIeWmmParam->ucQosInfo = (prBssInfo->ucWmmParamSetCount & WMM_QOS_INFO_PARAM_SET_CNT);
+	/* STAUT Buffer STA, also sleeps (optional)
+	*	The STAUT sends a TDLS Setup/Response/Confirm Frame, to STA 2, via the AP,
+	*	with all four AC flags set to 1 in QoS Info Field
+	*/
+	if (IS_FEATURE_ENABLED(prAdapter->rWifiVar.fgTdlsBufferSTASleep))
+		prIeWmmParam->ucQosInfo = (0x0F & WMM_QOS_INFO_PARAM_SET_CNT);
+	else
+		prIeWmmParam->ucQosInfo = (prBssInfo->ucWmmParamSetCount & WMM_QOS_INFO_PARAM_SET_CNT);
 
 	/* UAPSD initial queue configurations (delivery and trigger enabled) */
 	if (IS_FEATURE_ENABLED(prAdapter->rWifiVar.ucUapsd))
@@ -4587,13 +4681,13 @@ qmGetFrameAction(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex,
 
 		/* 4 <3> Queue, if BSS is absent, drop probe response */
 		if (prBssInfo->fgIsNetAbsent) {
-			if (isProbeResponse(prMsduInfo)) {
-				DBGLOG(TX, INFO, "Drop probe response (BSS[%u] Absent)\n",
+			if (prMsduInfo && isProbeResponse(prMsduInfo)) {
+				DBGLOG(TX, TRACE, "Drop probe response (BSS[%u] Absent)\n",
 					prBssInfo->ucBssIndex);
 
 				eFrameAction = FRAME_ACTION_DROP_PKT;
 			} else {
-				DBGLOG(TX, INFO, "Queue packets (BSS[%u] Absent)\n",
+				DBGLOG(TX, TRACE, "Queue packets (BSS[%u] Absent)\n",
 					prBssInfo->ucBssIndex);
 				eFrameAction = FRAME_ACTION_QUEUE_PKT;
 			}
@@ -4698,8 +4792,12 @@ VOID qmHandleEventBssAbsencePresence(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T
 		QM_DBG_CNT_INC(&(prAdapter->rQM), QM_DBG_CNT_28);
 	}
 	/* From Absent to Present */
-	if ((fgIsNetAbsentOld) && (!prBssInfo->fgIsNetAbsent))
-		kalSetEvent(prAdapter->prGlueInfo);
+	if ((fgIsNetAbsentOld) && (!prBssInfo->fgIsNetAbsent)) {
+		if (HAL_IS_TX_DIRECT(prAdapter))
+			nicTxDirectStartCheckQTimer(prAdapter);
+		else
+			kalSetEvent(prAdapter->prGlueInfo);
+	}
 }
 
 /*----------------------------------------------------------------------------*/
@@ -4738,8 +4836,12 @@ VOID qmHandleEventStaChangePsMode(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T pr
 		DBGLOG(QM, INFO, "PS=%d,%d\n", prEventStaChangePsMode->ucStaRecIdx, prStaRec->fgIsInPS);
 
 		/* From PS to Awake */
-		if ((fgIsInPSOld) && (!prStaRec->fgIsInPS))
-			kalSetEvent(prAdapter->prGlueInfo);
+		if ((fgIsInPSOld) && (!prStaRec->fgIsInPS)) {
+			if (HAL_IS_TX_DIRECT(prAdapter))
+				nicTxDirectStartCheckQTimer(prAdapter);
+			else
+				kalSetEvent(prAdapter->prGlueInfo);
+		}
 	}
 }
 
@@ -4772,7 +4874,10 @@ VOID qmHandleEventStaUpdateFreeQuota(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T
 					  prEventStaUpdateFreeQuota->ucUpdateMode,
 					  prEventStaUpdateFreeQuota->ucFreeQuota);
 
-			kalSetEvent(prAdapter->prGlueInfo);
+			if (HAL_IS_TX_DIRECT(prAdapter))
+				nicTxDirectStartCheckQTimer(prAdapter);
+			else
+				kalSetEvent(prAdapter->prGlueInfo);
 		}
 #if 0
 		DBGLOG(QM, TRACE,
@@ -5845,4 +5950,160 @@ VOID qmResetTcControlResource(IN P_ADAPTER_T prAdapter)
 	prQM->u4ResidualTcResource = u4TotalTcResource - u4TotalGurantedTcResource;
 
 }
+#endif
+
+
+#if CFG_SUPPORT_REPLAY_DETECTION
+/* To change PN number to UINT64 */
+#define CCMPTSCPNNUM	6
+BOOLEAN qmRxPNtoU64(PUINT_8 pucPN, UINT_8 uPNNum, PUINT_64 pu8Rets)
+{
+	UINT_8 ucCount = 0;
+	UINT_64 u8Data = 0;
+	UINT_64 ucTmp = 0;
+
+	if (!pu8Rets) {
+		DBGLOG(QM, ERROR, "Please input valid pu8Rets\n");
+		return FALSE;
+	}
+
+	if (uPNNum > CCMPTSCPNNUM) {
+		DBGLOG(QM, ERROR, "Please input valid uPNNum:%d\n", uPNNum);
+		return FALSE;
+	}
+
+	*pu8Rets = 0;
+	for (; ucCount < uPNNum; ucCount++) {
+		ucTmp = pucPN[ucCount];
+		u8Data = ucTmp << 8*ucCount;
+		*pu8Rets +=  u8Data;
+	}
+	return TRUE;
+}
+
+/* To check PN/TSC between RxStatus and local record. return TRUE if PNS is not bigger than PNT */
+BOOLEAN qmRxDetectReplay(PUINT_8 pucPNS, PUINT_8 pucPNT)
+{
+	UINT_64 u8RxNum = 0;
+	UINT_64 u8LocalRec = 0;
+
+	if (!pucPNS || !pucPNT) {
+		DBGLOG(QM, ERROR, "Please input valid PNS:%p and PNT:%p\n", pucPNS, pucPNT);
+		return TRUE;
+	}
+
+	if (!qmRxPNtoU64(pucPNS, CCMPTSCPNNUM, &u8RxNum)
+		|| !qmRxPNtoU64(pucPNT, CCMPTSCPNNUM, &u8LocalRec)) {
+		DBGLOG(QM, ERROR, "PN2U64 failed\n");
+		return TRUE;
+	}
+	/* PN overflow ? */
+
+	return !(u8RxNum > u8LocalRec);
+}
+
+/* TO filter broadcast and multicast data packet replay issue. */
+BOOLEAN qmHandleRxReplay(P_ADAPTER_T prAdapter, P_SW_RFB_T prSwRfb)
+{
+	PUINT_8 pucPN = NULL;
+	UINT_8 ucKeyID = 0;				/* 0~4 */
+	UINT_8 ucSecMode = CIPHER_SUITE_NONE;		/* CIPHER_SUITE_NONE~CIPHER_SUITE_GCMP */
+	P_GLUE_INFO_T prGlueInfo = NULL;
+	P_GL_WPA_INFO_T prWpaInfo = NULL;
+	struct SEC_DETECT_REPLAY_INFO *prDetRplyInfo = NULL;
+	P_HW_MAC_RX_DESC_T prRxStatus = NULL;
+	UINT_8 ucBssIndex = 0;
+	P_BSS_INFO_T prBssInfo = NULL;
+	UINT_8 ucCheckZeroPN;
+	UINT_8 i;
+
+	if (!prAdapter)
+		return TRUE;
+	if (prSwRfb->u2PacketLen <= ETHER_HEADER_LEN)
+		return TRUE;
+
+	ucBssIndex = prSwRfb->prStaRec->ucBssIndex;
+	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+	ASSERT(prBssInfo);
+
+	prGlueInfo = prAdapter->prGlueInfo;
+	prWpaInfo = &prGlueInfo->rWpaInfo;
+
+	if (!(prSwRfb->ucGroupVLD & BIT(RX_GROUP_VLD_1)))
+		return FALSE;
+
+	/* BMC only need check CCMP and TKIP Cipher suite */
+	prRxStatus = prSwRfb->prRxStatus;
+	ucSecMode = HAL_RX_STATUS_GET_SEC_MODE(prRxStatus);
+	if (ucSecMode != CIPHER_SUITE_CCMP
+		&& ucSecMode != CIPHER_SUITE_TKIP) {
+		DBGLOG(QM, TRACE, "SecMode: %d and CipherGroup: %d, no need check replay\n",
+				ucSecMode, prWpaInfo->u4CipherGroup);
+#if 0
+		if (!(prSwRfb->ucGroupVLD & BIT(RX_GROUP_VLD_1))) {
+			DBGLOG(QM, ERROR, "Group 1 invalid\n");
+			return TRUE;
+		}
+#endif
+		return FALSE;
+	}
+
+	ucKeyID = HAL_RX_STATUS_GET_KEY_ID(prRxStatus);
+	if (ucKeyID >= MAX_KEY_NUM) {
+		DBGLOG(QM, ERROR, "KeyID: %d error\n", ucKeyID);
+		return TRUE;
+	}
+
+	prDetRplyInfo = &prBssInfo->rDetRplyInfo;
+
+#if 0
+	if (prDetRplyInfo->arReplayPNInfo[ucKeyID].fgFirstPkt) {
+		prDetRplyInfo->arReplayPNInfo[ucKeyID].fgFirstPkt = FALSE;
+		HAL_RX_STATUS_GET_PN(prSwRfb->prRxStatusGroup1, prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN);
+		DBGLOG(QM, INFO,
+			"First check packet. Key ID:0x%x\n", ucKeyID);
+		return FALSE;
+	}
+#endif
+
+	pucPN = prSwRfb->prRxStatusGroup1->aucPN;
+	DBGLOG(QM, TRACE,
+			"BC packet 0x%x:0x%x:0x%x:0x%x:0x%x:0x%x--0x%x:0x%x:0x%x:0x%x:0x%x:0x%x\n",
+			pucPN[0], pucPN[1], pucPN[2], pucPN[3], pucPN[4], pucPN[5],
+			prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN[0],
+			prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN[1],
+			prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN[2],
+			prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN[3],
+			prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN[4],
+			prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN[5]);
+
+	if (prDetRplyInfo->fgKeyRscFresh == TRUE) {
+
+		/* PN non-fresh setting */
+		prDetRplyInfo->fgKeyRscFresh = FALSE;
+		ucCheckZeroPN = 0;
+
+		for (i = 0; i < 8; i++) {
+			if (prSwRfb->prRxStatusGroup1->aucPN[i] == 0x0)
+				ucCheckZeroPN++;
+		}
+
+		/* for AP start PN from 0, bypass PN check and update */
+		if (ucCheckZeroPN == 8) {
+			DBGLOG(QM, WARN, "Fresh BC_PN with AP PN=0\n");
+			return FALSE;
+		}
+	}
+
+	if (qmRxDetectReplay(pucPN, prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN)) {
+		DBGLOG(QM, WARN, "Drop BC replay packet!\n");
+		return TRUE;
+	}
+
+	HAL_RX_STATUS_GET_PN(prSwRfb->prRxStatusGroup1, prDetRplyInfo->arReplayPNInfo[ucKeyID].auPN);
+
+	return FALSE;
+}
+
 #endif

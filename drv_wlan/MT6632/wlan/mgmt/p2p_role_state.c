@@ -72,13 +72,30 @@ p2pRoleStateAbort_IDLE(IN P_ADAPTER_T prAdapter,
 
 VOID p2pRoleStateInit_SCAN(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex, IN P_P2P_SCAN_REQ_INFO_T prScanReqInfo)
 {
+	P_P2P_DEV_FSM_INFO_T prP2pDevFsmInfo = (P_P2P_DEV_FSM_INFO_T) NULL;
+	P_P2P_SCAN_REQ_INFO_T prDevScanReqInfo = NULL;
+
 	do {
 		ASSERT_BREAK((prAdapter != NULL) && (prScanReqInfo != NULL));
 
 		prScanReqInfo->fgIsScanRequest = TRUE;
-
+		if (prScanReqInfo->u4BufLength == 0) {
+			/* If we let u4BufLength be zero, scan module will copy the IE buf from ScanParam */
+			/* Sometime this content is from AIS, so we need copy it from P2Pdev */
+			prP2pDevFsmInfo = prAdapter->rWifiVar.prP2pDevFsmInfo;
+			if (prP2pDevFsmInfo) {
+				prDevScanReqInfo = &(prP2pDevFsmInfo->rScanReqInfo);
+				if (prDevScanReqInfo->u4BufLength != 0) {
+					/* IE Buffer */
+					kalMemCopy(prScanReqInfo->aucIEBuf, prDevScanReqInfo->aucIEBuf,
+							prDevScanReqInfo->u4BufLength);
+					prScanReqInfo->u4BufLength = prDevScanReqInfo->u4BufLength;
+					DBGLOG(P2P, TRACE, "p2pRoleStateInit_SCAN Copy p2p IE from P2P dev\n");
+				}
+			} else
+				DBGLOG(P2P, ERROR, "No prP2pDevFsmInfo ptr\n");
+		}
 		p2pFuncRequestScan(prAdapter, ucBssIndex, prScanReqInfo);
-
 	} while (FALSE);
 }				/* p2pRoleStateInit_SCAN */
 
@@ -301,15 +318,60 @@ p2pRoleStateAbort_GC_JOIN(IN P_ADAPTER_T prAdapter,
 	} while (FALSE);
 }
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID
+p2pRoleStateInit_DFS_CAC(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx, IN P_P2P_CHNL_REQ_INFO_T prChnlReqInfo)
+{
+
+	do {
+		ASSERT_BREAK((prAdapter != NULL) && (prChnlReqInfo != NULL));
+
+		p2pFuncAcquireCh(prAdapter, ucBssIdx, prChnlReqInfo);
+	} while (FALSE);
+}				/* p2pRoleStateInit_DFS_CAC */
+
+VOID
+p2pRoleStateAbort_DFS_CAC(IN P_ADAPTER_T prAdapter,
+				 IN P_BSS_INFO_T prP2pRoleBssInfo,
+				 IN P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo, IN ENUM_P2P_ROLE_STATE_T eNextState)
+{
+	do {
+		cnmTimerStopTimer(prAdapter, &(prP2pRoleFsmInfo->rP2pRoleFsmTimeoutTimer));
+
+		p2pFuncReleaseCh(prAdapter, prP2pRoleFsmInfo->ucBssIndex,
+					&(prP2pRoleFsmInfo->rChnlReqInfo));
+	} while (FALSE);
+}				/* p2pRoleStateAbort_DFS_CAC */
+
+VOID
+p2pRoleStateInit_SWITCH_CHANNEL(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx, IN P_P2P_CHNL_REQ_INFO_T prChnlReqInfo)
+{
+
+	do {
+		ASSERT_BREAK((prAdapter != NULL) && (prChnlReqInfo != NULL));
+
+		p2pFuncAcquireCh(prAdapter, ucBssIdx, prChnlReqInfo);
+	} while (FALSE);
+}				/* p2pRoleStateInit_SWITCH_CHANNEL */
+
+VOID
+p2pRoleStateAbort_SWITCH_CHANNEL(IN P_ADAPTER_T prAdapter,
+				 IN P_BSS_INFO_T prP2pRoleBssInfo,
+				 IN P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo, IN ENUM_P2P_ROLE_STATE_T eNextState)
+{
+	do {
+		p2pFuncReleaseCh(prAdapter, prP2pRoleFsmInfo->ucBssIndex,
+					&(prP2pRoleFsmInfo->rChnlReqInfo));
+	} while (FALSE);
+}				/* p2pRoleStateAbort_SWITCH_CHANNEL */
+#endif
+
 VOID
 p2pRoleStatePrepare_To_REQING_CHANNEL_STATE(IN P_ADAPTER_T prAdapter,
 					    IN P_BSS_INFO_T prBssInfo,
 					    IN P_P2P_CONNECTION_REQ_INFO_T prConnReqInfo,
 					    OUT P_P2P_CHNL_REQ_INFO_T prChnlReqInfo)
 {
-	ENUM_BAND_T eBand;
-	UINT_8 ucChannel;
-	ENUM_CHNL_EXT_T eSCO;
 	ENUM_BAND_T eBandBackup;
 	UINT_8 ucChannelBackup;
 	ENUM_CHNL_EXT_T eSCOBackup;
@@ -334,12 +396,7 @@ p2pRoleStatePrepare_To_REQING_CHANNEL_STATE(IN P_ADAPTER_T prAdapter,
 		prBssInfo->ucPrimaryChannel = prConnReqInfo->rChannelInfo.ucChannelNum;
 		prBssInfo->eBand = prConnReqInfo->rChannelInfo.eBand;
 
-		if (cnmPreferredChannel(prAdapter, &eBand, &ucChannel, &eSCO) &&
-		    eSCO != CHNL_EXT_SCN && ucChannel == prBssInfo->ucPrimaryChannel && eBand == prBssInfo->eBand) {
-			prBssInfo->eBssSCO = eSCO;
-		} else {
-			prBssInfo->eBssSCO = rlmDecideScoForAP(prAdapter, prBssInfo);
-		}
+		prBssInfo->eBssSCO = rlmGetScoForAP(prAdapter, prBssInfo);
 
 		ASSERT_BREAK((prAdapter != NULL) && (prConnReqInfo != NULL) && (prChnlReqInfo != NULL));
 		prChnlReqInfo->u8Cookie = 0;
@@ -351,14 +408,20 @@ p2pRoleStatePrepare_To_REQING_CHANNEL_STATE(IN P_ADAPTER_T prAdapter,
 
 
 		/*rlmBssInitForAP would decide the real AP bandwidth*/
-		if (prBssInfo->eBand == BAND_5G)
-			prChnlReqInfo->eChannelWidth = CW_80MHZ;
-		else
-			prChnlReqInfo->eChannelWidth = CW_20_40MHZ;
-
-		prChnlReqInfo->ucCenterFreqS1 =
-			nicGetVhtS1(prBssInfo->ucPrimaryChannel, prChnlReqInfo->eChannelWidth);
-		prChnlReqInfo->ucCenterFreqS2 = 0;
+		prBssInfo->ucVhtChannelWidth =
+			cnmGetBssMaxBwToChnlBW(prAdapter, prBssInfo->ucBssIndex);
+		prChnlReqInfo->eChannelWidth = prBssInfo->ucVhtChannelWidth;
+		if (prChnlReqInfo->eChannelWidth == VHT_OP_CHANNEL_WIDTH_80P80) {
+			/* TODO: BW80+80 support */
+			DBGLOG(RLM, WARN, "BW80+80 not support. Fallback  to VHT_OP_CHANNEL_WIDTH_20_40\n");
+			prChnlReqInfo->eChannelWidth = VHT_OP_CHANNEL_WIDTH_20_40;
+			prChnlReqInfo->ucCenterFreqS1 = 0;
+			prChnlReqInfo->ucCenterFreqS2 = 0;
+		} else {
+			prChnlReqInfo->ucCenterFreqS1 =
+			rlmGetVhtS1ForAP(prAdapter, prBssInfo);
+			prChnlReqInfo->ucCenterFreqS2 = 0;
+		}
 
 		/* If the S1 is invalid, force to change bandwidth */
 		if ((prBssInfo->eBand == BAND_5G) &&
@@ -373,3 +436,64 @@ p2pRoleStatePrepare_To_REQING_CHANNEL_STATE(IN P_ADAPTER_T prAdapter,
 		prBssInfo->eBssSCO = eSCOBackup;
 	} while (FALSE);
 }
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID
+p2pRoleStatePrepare_To_DFS_CAC_STATE(IN P_ADAPTER_T prAdapter,
+					IN P_BSS_INFO_T prBssInfo,
+					IN ENUM_CHANNEL_WIDTH_T rChannelWidth,
+					IN P_P2P_CONNECTION_REQ_INFO_T prConnReqInfo,
+					OUT P_P2P_CHNL_REQ_INFO_T prChnlReqInfo)
+{
+	ENUM_BAND_T eBandBackup;
+	UINT_8 ucChannelBackup;
+	ENUM_CHNL_EXT_T eSCOBackup;
+	P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo = (P_P2P_ROLE_FSM_INFO_T) NULL;
+
+	do {
+
+		eBandBackup = prBssInfo->eBand;
+		ucChannelBackup = prBssInfo->ucPrimaryChannel;
+		eSCOBackup = prBssInfo->eBssSCO;
+
+		prBssInfo->ucPrimaryChannel = prConnReqInfo->rChannelInfo.ucChannelNum;
+		prBssInfo->eBand = prConnReqInfo->rChannelInfo.eBand;
+
+		prBssInfo->eBssSCO = rlmGetScoForAP(prAdapter, prBssInfo);
+
+		prP2pRoleFsmInfo = P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter, prBssInfo->u4PrivateData);
+
+		ASSERT_BREAK((prAdapter != NULL) && (prConnReqInfo != NULL) && (prChnlReqInfo != NULL));
+		prChnlReqInfo->u8Cookie = 0;
+		prChnlReqInfo->ucReqChnlNum = prConnReqInfo->rChannelInfo.ucChannelNum;
+		prChnlReqInfo->eBand = prConnReqInfo->rChannelInfo.eBand;
+		prChnlReqInfo->eChnlSco = prBssInfo->eBssSCO;
+		prChnlReqInfo->u4MaxInterval =
+				prAdapter->prGlueInfo->prP2PInfo[prP2pRoleFsmInfo->ucRoleIndex]->cac_time_ms;
+		prChnlReqInfo->eChnlReqType = CH_REQ_TYPE_DFS_CAC;
+
+		prBssInfo->ucVhtChannelWidth =
+			cnmGetBssMaxBwToChnlBW(prAdapter, prBssInfo->ucBssIndex);
+		prChnlReqInfo->eChannelWidth = prBssInfo->ucVhtChannelWidth;
+
+		if (prChnlReqInfo->eChannelWidth == VHT_OP_CHANNEL_WIDTH_80P80) {
+			/* TODO: BW80+80 support */
+			DBGLOG(RLM, WARN, "BW80+80 not support. Fallback  to VHT_OP_CHANNEL_WIDTH_20_40\n");
+			prChnlReqInfo->eChannelWidth = VHT_OP_CHANNEL_WIDTH_20_40;
+			prChnlReqInfo->ucCenterFreqS1 = 0;
+			prChnlReqInfo->ucCenterFreqS2 = 0;
+		} else {
+			prChnlReqInfo->ucCenterFreqS1 =
+				rlmGetVhtS1ForAP(prAdapter, prBssInfo);
+			prChnlReqInfo->ucCenterFreqS2 = 0;
+		}
+
+		DBGLOG(P2P, TRACE, "p2pRoleStatePrepare_To_REQING_CHANNEL_STATE\n");
+
+		/* Reset */
+		prBssInfo->ucPrimaryChannel = ucChannelBackup;
+		prBssInfo->eBand = eBandBackup;
+		prBssInfo->eBssSCO = eSCOBackup;
+	} while (FALSE);
+}
+#endif

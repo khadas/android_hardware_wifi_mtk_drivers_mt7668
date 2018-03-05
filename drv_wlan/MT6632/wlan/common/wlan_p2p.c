@@ -826,7 +826,7 @@ wlanoidSetP2PMulticastList(IN P_ADAPTER_T prAdapter,
 	*pu4SetInfoLen = u4SetBufferLen;
 
 	/* Verify if we can support so many multicast addresses. */
-	if ((u4SetBufferLen / MAC_ADDR_LEN) > MAX_NUM_GROUP_ADDR) {
+	if (u4SetBufferLen > MAX_NUM_GROUP_ADDR * MAC_ADDR_LEN) {
 		DBGLOG(REQ, WARN, "Too many MC addresses\n");
 
 		return WLAN_STATUS_MULTICAST_FULL;
@@ -962,11 +962,7 @@ wlanoidGetP2PSDRequest(IN P_ADAPTER_T prAdapter,
 		       IN PVOID pvQueryBuffer, IN UINT_32 u4QueryBufferLen, OUT PUINT_32 pu4QueryInfoLen)
 {
 	WLAN_STATUS rWlanStatus = WLAN_STATUS_SUCCESS;
-	PUINT_8 pucPacketBuffer = NULL, pucTA = NULL;
 /* PUINT_8 pucChannelNum = NULL; */
-	PUINT_16 pu2PacketLength = NULL;
-	P_WLAN_MAC_HEADER_T prWlanHdr = (P_WLAN_MAC_HEADER_T) NULL;
-	UINT_8 ucVersionNum = 0;
 /* UINT_8 ucChannelNum = 0, ucSeqNum = 0; */
 
 	ASSERT(prAdapter);
@@ -981,47 +977,8 @@ wlanoidGetP2PSDRequest(IN P_ADAPTER_T prAdapter,
 	}
 
 	DBGLOG(P2P, TRACE, "Get Service Discovery Request\n");
-#if 0
-	ucVersionNum = p2pFuncGetVersionNumOfSD(prAdapter);
-	if (ucVersionNum == 0) {
-		P_PARAM_P2P_GET_SD_REQUEST prP2pGetSdReq = (P_PARAM_P2P_GET_SD_REQUEST) pvQueryBuffer;
 
-		pucPacketBuffer = prP2pGetSdReq->aucPacketContent;
-		pu2PacketLength = &prP2pGetSdReq->u2PacketLength;
-		pucTA = &prP2pGetSdReq->rTransmitterAddr;
-	} else {
-		P_PARAM_P2P_GET_SD_REQUEST_EX prP2pGetSdReqEx = (P_PARAM_P2P_GET_SD_REQUEST_EX) NULL;
-
-		prP2pGetSdReqEx = (P_PARAM_P2P_GET_SD_REQUEST) pvQueryBuffer;
-		pucPacketBuffer = prP2pGetSdReqEx->aucPacketContent;
-		pu2PacketLength = &prP2pGetSdReqEx->u2PacketLength;
-		pucTA = &prP2pGetSdReqEx->rTransmitterAddr;
-		pucChannelNum = &prP2pGetSdReqEx->ucChannelNum;
-		ucSeqNum = prP2pGetSdReqEx->ucSeqNum;
-	}
-
-	rWlanStatus = p2pFuncGetServiceDiscoveryFrame(prAdapter,
-						      pucPacketBuffer,
-						      (u4QueryBufferLen -
-						       sizeof(PARAM_P2P_GET_SD_REQUEST)),
-						      (PUINT_32) pu2PacketLength, pucChannelNum, ucSeqNum);
-#else
 	*pu4QueryInfoLen = 0;
-	return rWlanStatus;
-#endif
-
-	prWlanHdr = (P_WLAN_MAC_HEADER_T) pucPacketBuffer;
-
-	kalMemCopy(pucTA, prWlanHdr->aucAddr2, MAC_ADDR_LEN);
-
-	if (pu4QueryInfoLen) {
-		if (ucVersionNum == 0)
-			*pu4QueryInfoLen = (UINT_32) (sizeof(PARAM_P2P_GET_SD_REQUEST) + (*pu2PacketLength));
-		else
-			*pu4QueryInfoLen = (UINT_32) (sizeof(PARAM_P2P_GET_SD_REQUEST_EX) + (*pu2PacketLength));
-
-	}
-
 	return rWlanStatus;
 }				/* end of wlanoidGetP2PSDRequest() */
 
@@ -1049,11 +1006,7 @@ wlanoidGetP2PSDResponse(IN P_ADAPTER_T prAdapter,
 			IN PVOID pvQueryBuffer, IN UINT_32 u4QueryBufferLen, OUT PUINT_32 pu4QueryInfoLen)
 {
 	WLAN_STATUS rWlanStatus = WLAN_STATUS_SUCCESS;
-	P_WLAN_MAC_HEADER_T prWlanHdr = (P_WLAN_MAC_HEADER_T) NULL;
 	/* UINT_8 ucSeqNum = 0, */
-	UINT_8 ucVersionNum = 0;
-	PUINT_8 pucPacketContent = (PUINT_8) NULL, pucTA = (PUINT_8) NULL;
-	PUINT_16 pu2PacketLength = (PUINT_16) NULL;
 
 	ASSERT(prAdapter);
 	ASSERT(pu4QueryInfoLen);
@@ -1068,46 +1021,7 @@ wlanoidGetP2PSDResponse(IN P_ADAPTER_T prAdapter,
 
 	DBGLOG(P2P, TRACE, "Get Service Discovery Response\n");
 
-#if 0
-	ucVersionNum = p2pFuncGetVersionNumOfSD(prAdapter);
-	if (ucVersionNum == 0) {
-		P_PARAM_P2P_GET_SD_RESPONSE prP2pGetSdRsp = (P_PARAM_P2P_GET_SD_RESPONSE) NULL;
-
-		prP2pGetSdRsp = (P_PARAM_P2P_GET_SD_REQUEST) pvQueryBuffer;
-		pucPacketContent = prP2pGetSdRsp->aucPacketContent;
-		pucTA = &prP2pGetSdRsp->rTransmitterAddr;
-		pu2PacketLength = &prP2pGetSdRsp->u2PacketLength;
-	} else {
-		P_PARAM_P2P_GET_SD_RESPONSE_EX prP2pGetSdRspEx = (P_PARAM_P2P_GET_SD_RESPONSE_EX) NULL;
-
-		prP2pGetSdRspEx = (P_PARAM_P2P_GET_SD_RESPONSE_EX) pvQueryBuffer;
-		pucPacketContent = prP2pGetSdRspEx->aucPacketContent;
-		pucTA = &prP2pGetSdRspEx->rTransmitterAddr;
-		pu2PacketLength = &prP2pGetSdRspEx->u2PacketLength;
-		ucSeqNum = prP2pGetSdRspEx->ucSeqNum;
-	}
-
-/* rWlanStatus = p2pFuncGetServiceDiscoveryFrame(prAdapter, */
-/* pucPacketContent, */
-/* (u4QueryBufferLen - sizeof(PARAM_P2P_GET_SD_RESPONSE)), */
-/* (PUINT_32)pu2PacketLength, */
-/* NULL, */
-/* ucSeqNum); */
-#else
 	*pu4QueryInfoLen = 0;
-	return rWlanStatus;
-#endif
-	prWlanHdr = (P_WLAN_MAC_HEADER_T) pucPacketContent;
-
-	kalMemCopy(pucTA, prWlanHdr->aucAddr2, MAC_ADDR_LEN);
-
-	if (pu4QueryInfoLen) {
-		if (ucVersionNum == 0)
-			*pu4QueryInfoLen = (UINT_32) (sizeof(PARAM_P2P_GET_SD_RESPONSE) + *pu2PacketLength);
-		else
-			*pu4QueryInfoLen = (UINT_32) (sizeof(PARAM_P2P_GET_SD_RESPONSE_EX) + *pu2PacketLength);
-	}
-
 	return rWlanStatus;
 }				/* end of wlanoidGetP2PSDResponse() */
 
@@ -1335,32 +1249,27 @@ wlanoidSetOppPsParam(IN P_ADAPTER_T prAdapter,
 	prOppPsParam = (P_PARAM_CUSTOM_OPPPS_PARAM_STRUCT_T) pvSetBuffer;
 
 	kalMemZero(&rCmdOppPsParam, sizeof(CMD_CUSTOM_OPPPS_PARAM_STRUCT_T));
-	rCmdOppPsParam.u4CTwindowMs = prOppPsParam->u4CTwindowMs;
 
-#if 0
+	rCmdOppPsParam.ucBssIdx = prOppPsParam->ucBssIdx;
+
+	if (prOppPsParam->ucOppPs) {
+		/* [spec. 3.3.2] CTWindow should be at least 10 TU */
+		if (prOppPsParam->u4CTwindowMs < 10)
+			rCmdOppPsParam.u4CTwindowMs = 10;
+		else
+			rCmdOppPsParam.u4CTwindowMs = prOppPsParam->u4CTwindowMs;
+	} else
+		rCmdOppPsParam.u4CTwindowMs = 0;/* Set 0 means disable OppPs */
+
 	return wlanSendSetQueryCmd(prAdapter,
-				   CMD_ID_SET_OPPPS_PARAM,
-				   TRUE,
-				   FALSE,
-				   TRUE,
-				   nicCmdEventSetCommon,
-				   nicOidCmdTimeoutCommon,
-				   sizeof(CMD_CUSTOM_OPPPS_PARAM_STRUCT_T),
-				   (PUINT_8) &rCmdOppPsParam, pvSetBuffer, u4SetBufferLen);
-#else
-	return wlanoidSendSetQueryP2PCmd(prAdapter,
-					 CMD_ID_SET_NOA_PARAM,
-					 prOppPsParam->ucBssIdx,
-					 TRUE,
-					 FALSE,
-					 TRUE,
-					 NULL,
-					 nicOidCmdTimeoutCommon,
-					 sizeof(CMD_CUSTOM_OPPPS_PARAM_STRUCT_T),
-					 (PUINT_8) &rCmdOppPsParam, pvSetBuffer, u4SetBufferLen);
-
-#endif
-
+					CMD_ID_SET_OPPPS_PARAM,
+					TRUE,
+					FALSE,
+					TRUE,
+					nicCmdEventSetCommon,
+					nicOidCmdTimeoutCommon,
+					sizeof(CMD_CUSTOM_OPPPS_PARAM_STRUCT_T),
+					(PUINT_8)&rCmdOppPsParam, pvSetBuffer, u4SetBufferLen);
 }
 
 WLAN_STATUS
@@ -1433,44 +1342,6 @@ wlanoidSetUApsdParam(IN P_ADAPTER_T prAdapter,
 
 #endif
 }
-
-WLAN_STATUS
-wlanoidQueryP2pOpChannel(IN P_ADAPTER_T prAdapter,
-			 IN PVOID pvQueryBuffer, IN UINT_32 u4QueryBufferLen, OUT PUINT_32 pu4QueryInfoLen)
-{
-
-	WLAN_STATUS rResult = WLAN_STATUS_FAILURE;
-/* PUINT_8 pucOpChnl = (PUINT_8)pvQueryBuffer; */
-
-	do {
-		if ((prAdapter == NULL) || (pu4QueryInfoLen == NULL))
-			break;
-
-		if ((u4QueryBufferLen) && (pvQueryBuffer == NULL))
-			break;
-
-		if (u4QueryBufferLen < sizeof(UINT_8)) {
-			*pu4QueryInfoLen = sizeof(UINT_8);
-			rResult = WLAN_STATUS_BUFFER_TOO_SHORT;
-			break;
-		}
-#if 0
-		if (!p2pFuncGetCurrentOpChnl(prAdapter, pucOpChnl)) {
-			rResult = WLAN_STATUS_INVALID_DATA;
-			break;
-		}
-#else
-		rResult = WLAN_STATUS_INVALID_DATA;
-		break;
-#endif
-
-		*pu4QueryInfoLen = sizeof(UINT_8);
-		rResult = WLAN_STATUS_SUCCESS;
-
-	} while (FALSE);
-
-	return rResult;
-}				/* wlanoidQueryP2pOpChannel */
 
 WLAN_STATUS
 wlanoidQueryP2pVersion(IN P_ADAPTER_T prAdapter,

@@ -79,6 +79,8 @@
 #define DBDC_5G_WMM_INDEX	0
 #define DBDC_2G_WMM_INDEX	1
 #endif
+#define MAX_HW_WMM_INDEX	(HW_WMM_NUM - 1)
+#define DEFAULT_HW_WMM_INDEX (MAX_HW_WMM_INDEX - 1)
 /*******************************************************************************
 *                             D A T A   T Y P E S
 ********************************************************************************
@@ -89,6 +91,9 @@ typedef enum _ENUM_CH_REQ_TYPE_T {
 	CH_REQ_TYPE_P2P_LISTEN,
 	CH_REQ_TYPE_OFFCHNL_TX,
 	CH_REQ_TYPE_GO_START_BSS,
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	CH_REQ_TYPE_DFS_CAC,
+#endif
 	CH_REQ_TYPE_NUM
 } ENUM_CH_REQ_TYPE_T, *P_ENUM_CH_REQ_TYPE_T;
 
@@ -160,7 +165,6 @@ typedef struct _DEVICE_TYPE_T {
 #if CFG_SUPPORT_DBDC
 typedef struct _CNM_DBDC_CAP_T {
 	UINT_8 ucBssIndex;
-	UINT_8 ucDbdcBandIndex;
 	UINT_8 ucNss;
 	UINT_8 ucWmmSetIndex;
 } CNM_DBDC_CAP_T, *P_CNM_DBDC_CAP_T;
@@ -211,6 +215,12 @@ VOID cnmChMngrAbortPrivilege(P_ADAPTER_T prAdapter, P_MSG_HDR_T prMsgHdr);
 
 VOID cnmChMngrHandleChEvent(P_ADAPTER_T prAdapter, P_WIFI_EVENT_T prEvent);
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID cnmRadarDetectEvent(P_ADAPTER_T prAdapter, P_WIFI_EVENT_T prEvent);
+
+VOID cnmCsaDoneEvent(P_ADAPTER_T prAdapter, P_WIFI_EVENT_T prEvent);
+#endif
+
 BOOLEAN
 cnmPreferredChannel(P_ADAPTER_T prAdapter, P_ENUM_BAND_T prBand, PUINT_8 pucPrimaryChannel, P_ENUM_CHNL_EXT_T prBssSCO);
 
@@ -230,11 +240,18 @@ BOOLEAN cnmBss80mBwPermitted(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex);
 
 UINT_8 cnmGetBssMaxBw(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex);
 
+UINT_8 cnmGetBssMaxBwToChnlBW(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex);
+
 P_BSS_INFO_T cnmGetBssInfoAndInit(P_ADAPTER_T prAdapter, ENUM_NETWORK_TYPE_T eNetworkType, BOOLEAN fgIsP2pDevice);
 
 VOID cnmFreeBssInfo(P_ADAPTER_T prAdapter, P_BSS_INFO_T prBssInfo);
 #if CFG_SUPPORT_CHNL_CONFLICT_REVISE
 BOOLEAN cnmAisDetectP2PChannel(P_ADAPTER_T prAdapter, P_ENUM_BAND_T prBand, PUINT_8 pucPrimaryChannel);
+#endif
+
+#if (CFG_HW_WMM_BY_BSS == 1)
+UINT_8 cnmWmmIndexDecision(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo);
+VOID cnmFreeWmmIndex(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo);
 #endif
 
 #if CFG_SUPPORT_DBDC

@@ -97,12 +97,18 @@
 #define NIC_DRIVER_NAME                 "MediaTek Inc. Wireless LAN Adapter Driver"
 
 /* Define our driver version */
-#define NIC_DRIVER_MAJOR_VERSION        0
-#define NIC_DRIVER_MINOR_VERSION        0
-#define NIC_DRIVER_VERSION              (0, 0, 0, 1)
-#define NIC_DRIVER_VERSION_STRING       "0.0.0.1"
+#define NIC_DRIVER_MAJOR_VERSION        1
+#define NIC_DRIVER_MINOR_VERSION        1
+#define NIC_DRIVER_SERIAL_VERSION       0
+#define NIC_DRIVER_VERSION              (NIC_DRIVER_MAJOR_VERSION, \
+					 NIC_DRIVER_MINOR_VERSION, \
+					 NIC_DRIVER_SERIAL_VERSION)
 
-#define ZTE_VERSION			"ZTE 1.0.1.0"
+#define STR(s)                          #s
+#define XSTR(x)                         STR(x)
+#define NDV(v)                          XSTR(NIC_DRIVER_##v##_VERSION)
+#define NDV_STR(a, i, s)                NDV(a) "." NDV(i) "." NDV(s)
+#define NIC_DRIVER_VERSION_STRING       NDV_STR(MAJOR, MINOR, SERIAL)
 
 /*******************************************************************************
 *                             D A T A   T Y P E S

@@ -549,11 +549,13 @@ VOID scanAddToRoamBssDesc(IN P_ADAPTER_T prAdapter, IN P_BSS_DESC_T prBssDesc)
 			u4RemoveTime = u4RemoveTime / 2;
 		} while (u4RemoveTime > 0);
 
-		COPY_SSID(prRoamBssDesc->aucSSID, prRoamBssDesc->ucSSIDLen,
-				prBssDesc->aucSSID, prBssDesc->ucSSIDLen);
+		if (prRoamBssDesc != NULL)
+			COPY_SSID(prRoamBssDesc->aucSSID, prRoamBssDesc->ucSSIDLen,
+					prBssDesc->aucSSID, prBssDesc->ucSSIDLen);
 	}
 
-	GET_CURRENT_SYSTIME(&prRoamBssDesc->rUpdateTime);
+	if (prRoamBssDesc != NULL)
+		GET_CURRENT_SYSTIME(&prRoamBssDesc->rUpdateTime);
 }
 
 
@@ -632,68 +634,64 @@ scanSearchExistingBssDescWithSsid(IN P_ADAPTER_T prAdapter,
 	switch (eBSSType) {
 	case BSS_TYPE_P2P_DEVICE:
 		fgCheckSsid = FALSE;
+		/* fall through */
 	case BSS_TYPE_INFRASTRUCTURE:
 #if CFG_SUPPORT_ROAMING_SKIP_ONE_AP
 		scanSearchBssDescOfRoamSsid(prAdapter);
+		/* fall through */
 #endif
 	case BSS_TYPE_BOW_DEVICE:
-		{
-			prBssDesc = scanSearchBssDescByBssidAndSsid(prAdapter, aucBSSID, fgCheckSsid, prSsid);
+		prBssDesc = scanSearchBssDescByBssidAndSsid(prAdapter, aucBSSID, fgCheckSsid, prSsid);
 
-			/* if (eBSSType == prBssDesc->eBSSType) */
+		/* if (eBSSType == prBssDesc->eBSSType) */
 
-			return prBssDesc;
-		}
-
+		return prBssDesc;
 	case BSS_TYPE_IBSS:
-		{
-			prIBSSBssDesc = scanSearchBssDescByBssidAndSsid(prAdapter, aucBSSID, fgCheckSsid, prSsid);
-			prBssDesc = scanSearchBssDescByTAAndSsid(prAdapter, aucSrcAddr, fgCheckSsid, prSsid);
+		prIBSSBssDesc = scanSearchBssDescByBssidAndSsid(prAdapter, aucBSSID, fgCheckSsid, prSsid);
+		prBssDesc = scanSearchBssDescByTAAndSsid(prAdapter, aucSrcAddr, fgCheckSsid, prSsid);
 
-			/* NOTE(Kevin):
-			 * Rules to maintain the SCAN Result:
-			 * For AdHoc -
-			 *    CASE I    We have TA1(BSSID1), but it change its BSSID to BSSID2
-			 *              -> Update TA1 entry's BSSID.
-			 *    CASE II   We have TA1(BSSID1), and get TA1(BSSID1) again
-			 *              -> Update TA1 entry's contain.
-			 *    CASE III  We have a SCAN result TA1(BSSID1), and TA2(BSSID2). Sooner or
-			 *               later, TA2 merge into TA1, we get TA2(BSSID1)
-			 *              -> Remove TA2 first and then replace TA1 entry's TA with TA2,
-			 *                 Still have only one entry of BSSID.
-			 *    CASE IV   We have a SCAN result TA1(BSSID1), and another TA2 also merge into BSSID1.
-			 *              -> Replace TA1 entry's TA with TA2, Still have only one entry.
-			 *    CASE V    New IBSS
-			 *              -> Add this one to SCAN result.
-			 */
-			if (prBssDesc) {
-				if ((!prIBSSBssDesc) ||	/* CASE I */
-				    (prBssDesc == prIBSSBssDesc)) {	/* CASE II */
+		/* NOTE(Kevin):
+		 * Rules to maintain the SCAN Result:
+		 * For AdHoc -
+		 *    CASE I    We have TA1(BSSID1), but it change its BSSID to BSSID2
+		 *              -> Update TA1 entry's BSSID.
+		 *    CASE II   We have TA1(BSSID1), and get TA1(BSSID1) again
+		 *              -> Update TA1 entry's contain.
+		 *    CASE III  We have a SCAN result TA1(BSSID1), and TA2(BSSID2). Sooner or
+		 *               later, TA2 merge into TA1, we get TA2(BSSID1)
+		 *              -> Remove TA2 first and then replace TA1 entry's TA with TA2,
+		 *                 Still have only one entry of BSSID.
+		 *    CASE IV   We have a SCAN result TA1(BSSID1), and another TA2 also merge into BSSID1.
+		 *              -> Replace TA1 entry's TA with TA2, Still have only one entry.
+		 *    CASE V    New IBSS
+		 *              -> Add this one to SCAN result.
+		 */
+		if (prBssDesc) {
+			if ((!prIBSSBssDesc) ||	/* CASE I */
+			    (prBssDesc == prIBSSBssDesc)) {	/* CASE II */
 
-					return prBssDesc;
-				}
-
-
-				prBSSDescList = &prScanInfo->rBSSDescList;
-				prFreeBSSDescList = &prScanInfo->rFreeBSSDescList;
-
-				/* Remove this BSS Desc from the BSS Desc list */
-				LINK_REMOVE_KNOWN_ENTRY(prBSSDescList, prBssDesc);
-
-				/* Return this BSS Desc to the free BSS Desc list. */
-				LINK_INSERT_TAIL(prFreeBSSDescList, &prBssDesc->rLinkEntry);
-
-				return prIBSSBssDesc;
+				return prBssDesc;
 			}
 
-			if (prIBSSBssDesc) {	/* CASE IV */
 
-				return prIBSSBssDesc;
-			}
-			/* CASE V */
-			break;	/* Return NULL; */
+			prBSSDescList = &prScanInfo->rBSSDescList;
+			prFreeBSSDescList = &prScanInfo->rFreeBSSDescList;
+
+			/* Remove this BSS Desc from the BSS Desc list */
+			LINK_REMOVE_KNOWN_ENTRY(prBSSDescList, prBssDesc);
+
+			/* Return this BSS Desc to the free BSS Desc list. */
+			LINK_INSERT_TAIL(prFreeBSSDescList, &prBssDesc->rLinkEntry);
+
+			return prIBSSBssDesc;
 		}
 
+		if (prIBSSBssDesc) {	/* CASE IV */
+
+			return prIBSSBssDesc;
+		}
+		/* CASE V */
+		break;	/* Return NULL; */
 	default:
 		break;
 	}
@@ -1198,8 +1196,11 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 	u2IELength = (prSwRfb->u2PacketLen - prSwRfb->u2HeaderLen) -
 	    (UINT_16) OFFSET_OF(WLAN_BEACON_FRAME_BODY_T, aucInfoElem[0]);
 
-	if (u2IELength > CFG_IE_BUFFER_SIZE)
+	if (u2IELength > CFG_IE_BUFFER_SIZE) {
 		u2IELength = CFG_IE_BUFFER_SIZE;
+		DBGLOG(SCN, WARN, "IE len(%u) > Max IE buffer size(%u), truncate IE!\n",
+			   u2IELength, CFG_IE_BUFFER_SIZE);
+	}
 
 	IE_FOR_EACH(pucIE, u2IELength, u2Offset) {
 		switch (IE_ID(pucIE)) {
@@ -1336,7 +1337,12 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 	}
 #if 1
 
-	prBssDesc->u2RawLength = prSwRfb->u2PacketLen;
+	if (prSwRfb->u2PacketLen > CFG_RAW_BUFFER_SIZE) {
+		DBGLOG(SCN, WARN, "Pkt len(%u) > Max RAW buffer size(%u), truncate it!\n",
+			   prSwRfb->u2PacketLen, CFG_RAW_BUFFER_SIZE);
+		prBssDesc->u2RawLength = CFG_RAW_BUFFER_SIZE;
+	} else
+		prBssDesc->u2RawLength = prSwRfb->u2PacketLen;
 	kalMemCopy(prBssDesc->aucRawBuf, prWlanBeaconFrame, prBssDesc->u2RawLength);
 #endif
 
@@ -1363,6 +1369,7 @@ P_BSS_DESC_T scanAddToBssDesc(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb)
 	if (u2IELength > CFG_IE_BUFFER_SIZE) {
 		u2IELength = CFG_IE_BUFFER_SIZE;
 		prBssDesc->fgIsIEOverflow = TRUE;
+		DBGLOG(SCN, WARN, "IE is truncated!\n");
 	} else {
 		prBssDesc->fgIsIEOverflow = FALSE;
 	}
@@ -1862,7 +1869,7 @@ WLAN_STATUS scanProcessBeaconAndProbeResp(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_
 	prBssDesc = scanAddToBssDesc(prAdapter, prSwRfb);
 
 	if (prBssDesc) {
-
+#if CFG_SUPPORT_BEACON_CHANGE_DETECTION
 		/* 4 <1.1> Beacon Change Detection for Connected BSS */
 		if (prAisBssInfo->eConnectionState == PARAM_MEDIA_STATE_CONNECTED &&
 		    ((prBssDesc->eBSSType == BSS_TYPE_INFRASTRUCTURE && prConnSettings->eOPMode != NET_TYPE_IBSS)
@@ -1872,16 +1879,15 @@ WLAN_STATUS scanProcessBeaconAndProbeResp(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_
 				  prAisBssInfo->ucSSIDLen)) {
 			BOOLEAN fgNeedDisconnect = FALSE;
 
-#if CFG_SUPPORT_BEACON_CHANGE_DETECTION
 			/* <1.1.2> check if supported rate differs */
 			if (prAisBssInfo->u2OperationalRateSet != prBssDesc->u2OperationalRateSet)
 				fgNeedDisconnect = TRUE;
-#endif
 
 			/* <1.1.3> beacon content change detected, disconnect immediately */
 			if (fgNeedDisconnect == TRUE)
 				aisBssBeaconTimeout(prAdapter);
 		}
+#endif
 		/* 4 <1.1> Update AIS_BSS_INFO */
 		if (((prBssDesc->eBSSType == BSS_TYPE_INFRASTRUCTURE && prConnSettings->eOPMode != NET_TYPE_IBSS)
 		     || (prBssDesc->eBSSType == BSS_TYPE_IBSS && prConnSettings->eOPMode != NET_TYPE_INFRA))) {
@@ -2329,8 +2335,16 @@ P_BSS_DESC_T scanSearchBssDescByPolicy(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBss
 			break;
 
 		case CONNECT_BY_BSSID:
-			if (EQUAL_MAC_ADDR(prBssDesc->aucBSSID, prConnSettings->aucBSSID))
-				prPrimaryBssDesc = prBssDesc;
+			if (EQUAL_MAC_ADDR(prBssDesc->aucBSSID, prConnSettings->aucBSSID)) {
+				/* Make sure to match with SSID if supplied.
+				 * Some dual band APs share a single BSSID among different BSSes.
+				 */
+				if ((prBssDesc->ucSSIDLen > 0 && prConnSettings->ucSSIDLen > 0 &&
+					 EQUAL_SSID(prBssDesc->aucSSID, prBssDesc->ucSSIDLen,
+								prConnSettings->aucSSID, prConnSettings->ucSSIDLen)) ||
+					prConnSettings->ucSSIDLen == 0)
+					prPrimaryBssDesc = prBssDesc;
+			}
 			break;
 
 		default:
@@ -2518,26 +2532,22 @@ VOID scanReportBss2Cfg80211(IN P_ADAPTER_T prAdapter, IN ENUM_BSS_TYPE_T eBSSTyp
 #endif
 		}
 	} else {
+
+#if CFG_AUTO_CHANNEL_SEL_SUPPORT
+		/* Clear old ACS data (APNum, Dirtiness, ...) and initialize the ch number */
+		kalMemZero(&(prAdapter->rWifiVar.rChnLoadInfo),
+			sizeof(prAdapter->rWifiVar.rChnLoadInfo));
+		wlanInitChnLoadInfoChannelList(prAdapter);
+#endif
+
 		/* Search BSS Desc from current SCAN result list. */
 		LINK_FOR_EACH_ENTRY(prBssDesc, prBSSDescList, rLinkEntry, BSS_DESC_T) {
 #if CFG_AUTO_CHANNEL_SEL_SUPPORT
 			/* Record channel loading with channel's AP number */
-			UINT_8 ucIdx = 0;
+			UINT_8 ucIdx = wlanGetChannelIndex(prBssDesc->ucChannelNum);
 
-			if (prBssDesc->ucChannelNum <= 14)
-				ucIdx = prBssDesc->ucChannelNum - 1;
-			else if (prBssDesc->ucChannelNum >= 36 && prBssDesc->ucChannelNum <= 64)
-				ucIdx = 14 + (prBssDesc->ucChannelNum - 36) / 4;
-			else if (prBssDesc->ucChannelNum >= 100 && prBssDesc->ucChannelNum <= 144)
-				ucIdx = 14 + 8 + (prBssDesc->ucChannelNum - 100) / 4;
-			else if (prBssDesc->ucChannelNum >= 149)
-				ucIdx = 14 + 8 + 12 + (prBssDesc->ucChannelNum - 149) / 4;
-
-			if (ucIdx < MAX_CHN_NUM) {
-				prAdapter->rWifiVar.rChnLoadInfo.rEachChnLoad[ucIdx].ucChannel =
-					prBssDesc->ucChannelNum;
+			if (ucIdx < MAX_CHN_NUM)
 				prAdapter->rWifiVar.rChnLoadInfo.rEachChnLoad[ucIdx].u2APNum++;
-			}
 #endif
 
 			/* check BSSID is legal channel */
@@ -2548,7 +2558,9 @@ VOID scanReportBss2Cfg80211(IN P_ADAPTER_T prAdapter, IN ENUM_BSS_TYPE_T eBSSTyp
 
 			if ((prBssDesc->eBSSType == eBSSType)
 #if CFG_ENABLE_WIFI_DIRECT
-			    || ((eBSSType == BSS_TYPE_P2P_DEVICE) && (prBssDesc->fgIsP2PReport == TRUE))
+			    || ((eBSSType == BSS_TYPE_P2P_DEVICE) &&
+				    (prBssDesc->fgIsP2PReport == TRUE &&
+				     prAdapter->p2p_scan_report_all_bss))
 #endif
 			    ) {
 
@@ -2571,7 +2583,9 @@ VOID scanReportBss2Cfg80211(IN P_ADAPTER_T prAdapter, IN ENUM_BSS_TYPE_T eBSSTyp
 					}
 				} else {
 #if CFG_ENABLE_WIFI_DIRECT
-					if (prBssDesc->fgIsP2PReport == TRUE) {
+					if ((prBssDesc->fgIsP2PReport == TRUE &&
+					      prAdapter->p2p_scan_report_all_bss) &&
+					    prBssDesc->u2RawLength != 0) {
 #endif
 						rChannelInfo.ucChannelNum = prBssDesc->ucChannelNum;
 						rChannelInfo.eBand = prBssDesc->eBand;
@@ -2599,6 +2613,9 @@ VOID scanReportBss2Cfg80211(IN P_ADAPTER_T prAdapter, IN ENUM_BSS_TYPE_T eBSSTyp
 
 		}
 #if CFG_AUTO_CHANNEL_SEL_SUPPORT
+		wlanCalculateAllChannelDirtiness(prAdapter);
+		wlanSortChannel(prAdapter);
+
 		prAdapter->rWifiVar.rChnLoadInfo.fgDataReadyBit = TRUE;
 #endif
 

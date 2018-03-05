@@ -56,6 +56,18 @@
 
 #define P2P_OFF_CHNL_TX_DEFAULT_TIME_MS                      1000
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+extern struct P2P_RADAR_INFO g_rP2pRadarInfo;
+
+enum _ENUM_DFS_STATE_T {
+	DFS_STATE_INACTIVE = 0,
+	DFS_STATE_CHECKING,
+	DFS_STATE_ACTIVE,
+	DFS_STATE_DETECTED,
+	DFS_STATE_NUM
+};
+#endif
+
 /*******************************************************************************
  *                                 M A C R O S
  ********************************************************************************
@@ -130,11 +142,55 @@ VOID p2pFuncStopGO(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prP2pBssInfo);
 
 WLAN_STATUS p2pFuncRoleToBssIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucRoleIdx, OUT PUINT_8 pucBssIdx);
 
+P_P2P_ROLE_FSM_INFO_T p2pFuncGetRoleByBssIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex);
+
 VOID
 p2pFuncSwitchOPMode(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prP2pBssInfo, IN ENUM_OP_MODE_T eOpMode, IN BOOLEAN
 		    fgSyncToFW);
 
 VOID p2pFuncReleaseCh(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx, IN P_P2P_CHNL_REQ_INFO_T prChnlReqInfo);
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID p2pFuncStartRdd(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx);
+
+VOID p2pFuncStopRdd(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx);
+
+VOID p2pFuncDfsSwitchCh(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo, IN P2P_CHNL_REQ_INFO_T rP2pChnlReqInfo);
+
+BOOLEAN p2pFuncCheckWeatherRadarBand(IN P_P2P_CHNL_REQ_INFO_T prChnlReqInfo);
+
+INT_32 p2pFuncSetDriverCacTime(IN UINT_32 u4CacTime);
+
+VOID p2pFuncEnableManualCac(VOID);
+
+UINT_32 p2pFuncGetDriverCacTime(VOID);
+
+BOOLEAN p2pFuncIsManualCac(VOID);
+
+VOID p2pFuncRadarInfoInit(VOID);
+
+VOID p2pFuncShowRadarInfo(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx);
+
+VOID p2pFuncGetRadarInfo(IN struct P2P_RADAR_INFO *prP2pRadarInfo);
+
+PUINT_8 p2pFuncJpW53RadarType(VOID);
+
+PUINT_8 p2pFuncJpW56RadarType(VOID);
+
+VOID p2pFuncSetRadarDetectMode(IN UINT_8 ucRadarDetectMode);
+
+UINT_8 p2pFuncGetRadarDetectMode(VOID);
+
+VOID p2pFuncSetDfsState(IN UINT_8 ucDfsState);
+
+UINT_8 p2pFuncGetDfsState(VOID);
+
+PUINT_8 p2pFuncShowDfsState(VOID);
+
+VOID p2pFuncRecordCacStartBootTime(VOID);
+
+UINT_32 p2pFuncGetCacRemainingTime(VOID);
+#endif
 
 VOID p2pFuncSetChannel(IN P_ADAPTER_T prAdapter, IN UINT_8 ucRoleIdx, IN P_RF_CHANNEL_INFO_T prRfChannelInfo);
 
@@ -149,6 +205,10 @@ p2pFuncBeaconUpdate(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prP2pBssInfo, IN P
 		    prBcnUpdateInfo, IN PUINT_8 pucNewBcnHdr, IN UINT_32 u4NewHdrLen, IN PUINT_8 pucNewBcnBody, IN
 		    UINT_32 u4NewBodyLen);
 
+WLAN_STATUS
+p2pFuncAssocRespUpdate(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prP2pBssInfo, IN PUINT_8 AssocRespIE, IN
+		    UINT_32 u4AssocRespLen);
+
 BOOLEAN
 p2pFuncValidateAuth(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo, IN P_SW_RFB_T prSwRfb, IN PP_STA_RECORD_T
 		    pprStaRec, OUT PUINT_16 pu2StatusCode);
@@ -160,6 +220,8 @@ VOID p2pFuncResetStaRecStatus(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaR
 VOID
 p2pFuncInitConnectionSettings(IN P_ADAPTER_T prAdapter, IN P_P2P_CONNECTION_SETTINGS_T prP2PConnSettings, IN BOOLEAN
 			      fgIsApMode);
+
+BOOLEAN p2pFuncParseCheckForTKIPInfoElem(IN PUINT_8 pucBuf);
 
 BOOLEAN p2pFuncParseCheckForP2PInfoElem(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucBuf, OUT PUINT_8 pucOuiType);
 

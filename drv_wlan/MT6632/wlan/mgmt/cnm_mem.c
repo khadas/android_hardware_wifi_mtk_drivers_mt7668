@@ -164,7 +164,7 @@ P_MSDU_INFO_T cnmPktAllocWrapper(P_ADAPTER_T prAdapter, UINT_32 u4Length, PUINT_
 	P_MSDU_INFO_T prMsduInfo;
 
 	prMsduInfo = cnmPktAlloc(prAdapter, u4Length);
-	DBGLOG(MEM, INFO, "Alloc MSDU_INFO[0x%p] by [%s]\n", prMsduInfo, pucStr);
+	DBGLOG(MEM, LOUD, "Alloc MSDU_INFO[0x%p] by [%s]\n", prMsduInfo, pucStr);
 
 	return prMsduInfo;
 }
@@ -180,7 +180,7 @@ P_MSDU_INFO_T cnmPktAllocWrapper(P_ADAPTER_T prAdapter, UINT_32 u4Length, PUINT_
 /*----------------------------------------------------------------------------*/
 VOID cnmPktFreeWrapper(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo, PUINT_8 pucStr)
 {
-	DBGLOG(MEM, INFO, "Free MSDU_INFO[0x%p] by [%s]\n", prMsduInfo, pucStr);
+	DBGLOG(MEM, LOUD, "Free MSDU_INFO[0x%p] by [%s]\n", prMsduInfo, pucStr);
 
 	cnmPktFree(prAdapter, prMsduInfo);
 }
@@ -357,11 +357,11 @@ PVOID cnmMemAlloc(IN P_ADAPTER_T prAdapter, IN ENUM_RAM_TYPE_T eRamType, IN UINT
 		ASSERT(u4BlockNum <= MAX_NUM_OF_BUF_BLOCKS);
 	}
 
+	KAL_ACQUIRE_SPIN_LOCK(prAdapter, eRamType == RAM_TYPE_MSG ? SPIN_LOCK_MSG_BUF : SPIN_LOCK_MGT_BUF);
+
 #if CFG_DBG_MGT_BUF
 	prBufInfo->u4AllocCount++;
 #endif
-
-	KAL_ACQUIRE_SPIN_LOCK(prAdapter, eRamType == RAM_TYPE_MSG ? SPIN_LOCK_MSG_BUF : SPIN_LOCK_MGT_BUF);
 
 	if ((u4BlockNum > 0) && (u4BlockNum <= MAX_NUM_OF_BUF_BLOCKS)) {
 
@@ -392,6 +392,10 @@ PVOID cnmMemAlloc(IN P_ADAPTER_T prAdapter, IN ENUM_RAM_TYPE_T eRamType, IN UINT
 		}
 	}
 
+#if CFG_DBG_MGT_BUF
+	prBufInfo->u4AllocNullCount++;
+#endif
+
 	/* kalMemAlloc() shall not included in spin_lock */
 	KAL_RELEASE_SPIN_LOCK(prAdapter, eRamType == RAM_TYPE_MSG ? SPIN_LOCK_MSG_BUF : SPIN_LOCK_MGT_BUF);
 
@@ -402,10 +406,8 @@ PVOID cnmMemAlloc(IN P_ADAPTER_T prAdapter, IN ENUM_RAM_TYPE_T eRamType, IN UINT
 #endif
 
 #if CFG_DBG_MGT_BUF
-	prBufInfo->u4AllocNullCount++;
-
 	if (pvMemory)
-		prAdapter->u4MemAllocDynamicCount++;
+		GLUE_INC_REF_CNT(prAdapter->u4MemAllocDynamicCount);
 #endif
 
 	return pvMemory;
@@ -461,7 +463,7 @@ VOID cnmMemFree(IN P_ADAPTER_T prAdapter, IN PVOID pvMemory)
 #endif
 
 #if CFG_DBG_MGT_BUF
-		prAdapter->u4MemFreeDynamicCount++;
+		GLUE_INC_REF_CNT(prAdapter->u4MemFreeDynamicCount);
 #endif
 		return;
 	}
@@ -1368,7 +1370,7 @@ cnmPeerUpdate(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBufferLen, 
 	prStaRec->eStaType = prCmd->eStaType;
 
 	/* ++ support rate */
-	if (prCmd->aucSupRate) {
+	if (prCmd->u2SupRateLen) {
 		for (i = 0; i < prCmd->u2SupRateLen; i++) {
 			if (prCmd->aucSupRate[i]) {
 				ucRate = prCmd->aucSupRate[i] & RATE_MASK;
@@ -1391,7 +1393,7 @@ cnmPeerUpdate(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBufferLen, 
 		prStaRec->ucPhyTypeSet = 0;
 
 		if (prAisBssInfo->eBand == BAND_2G4) {
-			if (prCmd->rHtCap.rMCS.arRxMask)
+			if (prCmd->fgIsSupHt)
 				prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_HT;
 
 			/* if not 11n only */
@@ -1411,7 +1413,7 @@ cnmPeerUpdate(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBufferLen, 
 			if (prCmd->rVHtCap.u2CapInfo)
 				prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_VHT;
 
-			if (prCmd->rHtCap.rMCS.arRxMask)
+			if (prCmd->fgIsSupHt)
 				prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_HT;
 
 			/* if not 11n only */
@@ -1463,7 +1465,7 @@ cnmPeerUpdate(P_ADAPTER_T prAdapter, PVOID pvSetBuffer, UINT_32 u4SetBufferLen, 
 
 	/* ++HT capability */
 
-	if (prCmd->rHtCap.rMCS.arRxMask) {
+	if (prCmd->fgIsSupHt) {
 		prAdapter->rWifiVar.eRateSetting = FIXED_RATE_NONE;
 		prStaRec->ucDesiredPhyTypeSet |= PHY_TYPE_BIT_HT;
 		prStaRec->ucPhyTypeSet |= PHY_TYPE_BIT_HT;

@@ -310,12 +310,12 @@ typedef enum _ENUM_DBG_ASSERT_PATH_T {
 /* LOG function for print to buffer */
 /* If buffer pointer is NULL, redirect to normal DBGLOG */
 #define LOGBUF(_pucBuf, _maxLen, _curLen, _Fmt, ...) \
-	{ \
+	do { \
 		if (_pucBuf) \
-			(_curLen) += kalSnprintf((_pucBuf) + (_curLen), (_maxLen) - (_curLen), _Fmt, ##__VA_ARGS__); \
+			(_curLen) += kalScnprintf((_pucBuf) + (_curLen), (_maxLen) - (_curLen), _Fmt, ##__VA_ARGS__); \
 		else \
 			DBGLOG(SW4, INFO, _Fmt, ##__VA_ARGS__); \
-	}
+	} while (0)
 /* The following macro is used for debugging packed structures. */
 #ifndef DATA_STRUCT_INSPECTING_ASSERT
 #define DATA_STRUCT_INSPECTING_ASSERT(expr) \

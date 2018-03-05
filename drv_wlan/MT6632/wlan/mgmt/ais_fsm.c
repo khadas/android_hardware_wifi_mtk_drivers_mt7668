@@ -317,8 +317,10 @@ VOID aisFsmInit(IN P_ADAPTER_T prAdapter)
 	prAisBssInfo->prStaRecOfAP = (P_STA_RECORD_T) NULL;
 	prAisBssInfo->ucNss = wlanGetSupportNss(prAdapter, prAisBssInfo->ucBssIndex);
 	prAisBssInfo->eDBDCBand = ENUM_BAND_0;
-	prAisBssInfo->ucWmmQueSet = DBDC_2G_WMM_INDEX;
-
+#if (CFG_HW_WMM_BY_BSS == 0)
+	prAisBssInfo->ucWmmQueSet =
+			(prAdapter->rWifiVar.ucDbdcMode == DBDC_MODE_DISABLED) ? DBDC_5G_WMM_INDEX : DBDC_2G_WMM_INDEX;
+#endif
 	/* 4 <4> Allocate MSDU_INFO_T for Beacon */
 	prAisBssInfo->prBeacon = cnmMgtPktAlloc(prAdapter,
 						OFFSET_OF(WLAN_BEACON_FRAME_T, aucInfoElem[0]) + MAX_IE_LENGTH);
@@ -377,14 +379,12 @@ VOID aisFsmUninit(IN P_ADAPTER_T prAdapter)
 {
 	P_AIS_FSM_INFO_T prAisFsmInfo;
 	P_BSS_INFO_T prAisBssInfo;
-	P_AIS_SPECIFIC_BSS_INFO_T prAisSpecificBssInfo;
 
 	DEBUGFUNC("aisFsmUninit()");
 	DBGLOG(SW1, INFO, "->aisFsmUninit()\n");
 
 	prAisFsmInfo = &(prAdapter->rWifiVar.rAisFsmInfo);
 	prAisBssInfo = prAdapter->prAisBssInfo;
-	prAisSpecificBssInfo = &(prAdapter->rWifiVar.rAisSpecificBssInfo);
 
 	/* 4 <1> Stop all timers */
 	cnmTimerStopTimer(prAdapter, &prAisFsmInfo->rBGScanTimer);
@@ -397,18 +397,20 @@ VOID aisFsmUninit(IN P_ADAPTER_T prAdapter)
 	aisFsmFlushRequest(prAdapter);
 
 	/* 4 <3> Reset driver-domain BSS-INFO */
-	if (prAisBssInfo->prBeacon) {
-		cnmMgtPktFree(prAdapter, prAisBssInfo->prBeacon);
-		prAisBssInfo->prBeacon = NULL;
-	}
-#if CFG_SUPPORT_802_11W
-	rsnStopSaQuery(prAdapter);
-#endif
-
 	if (prAisBssInfo) {
+
+		if (prAisBssInfo->prBeacon) {
+			cnmMgtPktFree(prAdapter, prAisBssInfo->prBeacon);
+			prAisBssInfo->prBeacon = NULL;
+		}
+
 		cnmFreeBssInfo(prAdapter, prAisBssInfo);
 		prAdapter->prAisBssInfo = NULL;
 	}
+
+#if CFG_SUPPORT_802_11W
+	rsnStopSaQuery(prAdapter);
+#endif
 }				/* end of aisFsmUninit() */
 
 /*----------------------------------------------------------------------------*/
@@ -444,6 +446,10 @@ VOID aisFsmStateInit_JOIN(IN P_ADAPTER_T prAdapter, P_BSS_DESC_T prBssDesc)
 	/* 4 <2> Setup corresponding STA_RECORD_T */
 	prStaRec = bssCreateStaRecFromBssDesc(prAdapter,
 					      STA_TYPE_LEGACY_AP, prAdapter->prAisBssInfo->ucBssIndex, prBssDesc);
+	if (!prStaRec) {
+		DBGLOG(AIS, ERROR, "prStaRec is NULL!\n");
+		return;
+	}
 
 	prAisFsmInfo->prTargetStaRec = prStaRec;
 
@@ -678,7 +684,10 @@ VOID aisFsmStateInit_IBSS_MERGE(IN P_ADAPTER_T prAdapter, P_BSS_DESC_T prBssDesc
 	/* 4 <2> Setup corresponding STA_RECORD_T */
 	prStaRec = bssCreateStaRecFromBssDesc(prAdapter,
 					      STA_TYPE_ADHOC_PEER, prAdapter->prAisBssInfo->ucBssIndex, prBssDesc);
-
+	if (!prStaRec) {
+		DBGLOG(AIS, ERROR, "prStaRec is NULL!\n");
+		return;
+	}
 	prStaRec->fgIsMerging = TRUE;
 
 	prAisFsmInfo->prTargetStaRec = prStaRec;
@@ -1001,15 +1010,22 @@ VOID aisFsmSteps(IN P_ADAPTER_T prAdapter, ENUM_AIS_STATE_T eNextState)
 					prAisBssInfo->u4RsnSelectedPairwiseCipher =
 					    prBssDesc->u4RsnSelectedPairwiseCipher;
 					prAisBssInfo->u4RsnSelectedAKMSuite = prBssDesc->u4RsnSelectedAKMSuite;
+#if (CFG_HW_WMM_BY_BSS == 1)
+					if (prAisBssInfo->fgIsWmmInited == FALSE)
+						prAisBssInfo->ucWmmQueSet =
+							cnmWmmIndexDecision(prAdapter, prAisBssInfo);
+#endif
 #if CFG_SUPPORT_DBDC
 					cnmDbdcEnableDecision(prAdapter, prAisBssInfo->ucBssIndex, prBssDesc->eBand);
 					cnmGetDbdcCapability(prAdapter, prAisBssInfo->ucBssIndex,
 						prBssDesc->eBand, prBssDesc->ucChannelNum,
 						wlanGetSupportNss(prAdapter, prAisBssInfo->ucBssIndex), &rDbdcCap);
 
-					prAisBssInfo->eDBDCBand = rDbdcCap.ucDbdcBandIndex;
+					prAisBssInfo->eDBDCBand = ENUM_BAND_AUTO;
 					prAisBssInfo->ucNss = rDbdcCap.ucNss;
+#if (CFG_HW_WMM_BY_BSS == 0)
 					prAisBssInfo->ucWmmQueSet = rDbdcCap.ucWmmSetIndex;
+#endif
 #endif /*CFG_SUPPORT_DBDC*/
 					/* 4 <B> Do STATE transition and update current Operation Mode. */
 					if (prBssDesc->eBSSType == BSS_TYPE_INFRASTRUCTURE) {
@@ -1232,6 +1248,13 @@ VOID aisFsmSteps(IN P_ADAPTER_T prAdapter, ENUM_AIS_STATE_T eNextState)
 				prScanReqMsg->ucChannelListNum = 1;
 				prScanReqMsg->arChnlInfoList[0].eBand = eBand;
 				prScanReqMsg->arChnlInfoList[0].ucChannelNum = ucChannel;
+#if CFG_SCAN_CHANNEL_SPECIFIED
+			} else if (is_valid_scan_chnl_cnt(prAisFsmInfo->ucScanChannelListNum)) {
+				prScanReqMsg->eScanChannel = SCAN_CHANNEL_SPECIFIED;
+				prScanReqMsg->ucChannelListNum = prAisFsmInfo->ucScanChannelListNum;
+				kalMemCopy(prScanReqMsg->arChnlInfoList, prAisFsmInfo->arScanChnlInfoList,
+					sizeof(RF_CHANNEL_INFO_T) * prScanReqMsg->ucChannelListNum);
+#endif
 			} else if (prAdapter->aePreferBand[prAdapter->prAisBssInfo->ucBssIndex] == BAND_NULL) {
 				if (prAdapter->fgEnable5GBand == TRUE)
 					prScanReqMsg->eScanChannel = SCAN_CHANNEL_FULL;
@@ -1284,12 +1307,16 @@ VOID aisFsmSteps(IN P_ADAPTER_T prAdapter, ENUM_AIS_STATE_T eNextState)
 			prMsgChReq->eRfSco = prAisFsmInfo->prTargetBssDesc->eSco;
 			prMsgChReq->eRfBand = prAisFsmInfo->prTargetBssDesc->eBand;
 #if CFG_SUPPORT_DBDC
-			prMsgChReq->eDBDCBand = prAisBssInfo->eDBDCBand;
+			prMsgChReq->eDBDCBand = ENUM_BAND_AUTO;
 #endif /*CFG_SUPPORT_DBDC*/
 			/* To do: check if 80/160MHz bandwidth is needed here */
 			prMsgChReq->eRfChannelWidth = prAisFsmInfo->prTargetBssDesc->eChannelWidth;
 			prMsgChReq->ucRfCenterFreqSeg1 = prAisFsmInfo->prTargetBssDesc->ucCenterFreqS1;
 			prMsgChReq->ucRfCenterFreqSeg2 = prAisFsmInfo->prTargetBssDesc->ucCenterFreqS2;
+
+			rlmReviseMaxBw(prAdapter, prAisBssInfo->ucBssIndex, &prMsgChReq->eRfSco,
+					(P_ENUM_CHANNEL_WIDTH_P)&prMsgChReq->eRfChannelWidth,
+				&prMsgChReq->ucRfCenterFreqSeg1, &prMsgChReq->ucPrimaryChannel);
 
 			mboxSendMsg(prAdapter, MBOX_ID_0, (P_MSG_HDR_T) prMsgChReq, MSG_SEND_METHOD_BUF);
 
@@ -1379,7 +1406,7 @@ VOID aisFsmSteps(IN P_ADAPTER_T prAdapter, ENUM_AIS_STATE_T eNextState)
 			prMsgChReq->eRfSco = prAisFsmInfo->rChReqInfo.eSco;
 			prMsgChReq->eRfBand = prAisFsmInfo->rChReqInfo.eBand;
 #if CFG_SUPPORT_DBDC
-			prMsgChReq->eDBDCBand = prAdapter->prAisBssInfo->eDBDCBand;
+			prMsgChReq->eDBDCBand = ENUM_BAND_AUTO;
 #endif
 			mboxSendMsg(prAdapter, MBOX_ID_0, (P_MSG_HDR_T) prMsgChReq, MSG_SEND_METHOD_BUF);
 
@@ -1909,13 +1936,12 @@ enum _ENUM_AIS_STATE_T aisFsmJoinCompleteAction(IN struct _ADAPTER_T *prAdapter,
 				/* .. from AIS_BSS_INFO_T */
 				aisIndicationOfMediaStateToHost(prAdapter, PARAM_MEDIA_STATE_CONNECTED, FALSE);
 
-
-				if (prAdapter->rWifiVar.ucTpTestMode)
-					nicEnterTPTestMode(prAdapter, prAdapter->rWifiVar.ucTpTestMode);
-
-				if (prAdapter->rWifiVar.ucSigmaTestMode)
-					nicEnterTPTestMode(prAdapter, TEST_MODE_SIGMA);
-
+				if (prAdapter->rWifiVar.ucTpTestMode == ENUM_TP_TEST_MODE_THROUGHPUT)
+					nicEnterTPTestMode(prAdapter, TEST_MODE_THROUGHPUT);
+				else if (prAdapter->rWifiVar.ucTpTestMode == ENUM_TP_TEST_MODE_SIGMA_AC_N_PMF)
+					nicEnterTPTestMode(prAdapter, TEST_MODE_SIGMA_AC_N_PMF);
+				else if (prAdapter->rWifiVar.ucTpTestMode == ENUM_TP_TEST_MODE_SIGMA_WMM_PS)
+					nicEnterTPTestMode(prAdapter, TEST_MODE_SIGMA_WMM_PS);
 			}
 
 #if CFG_SUPPORT_ROAMING
@@ -2829,13 +2855,13 @@ VOID aisFsmDisconnect(IN P_ADAPTER_T prAdapter, IN BOOLEAN fgDelayIndication)
 	if (prAisBssInfo->eConnectionState == PARAM_MEDIA_STATE_CONNECTED) {
 
 		{
-
-			if (prAdapter->rWifiVar.ucTpTestMode)
+			if (prAdapter->rWifiVar.ucTpTestMode != ENUM_TP_TEST_MODE_NORMAL)
 				nicEnterTPTestMode(prAdapter, TEST_MODE_NONE);
 
+#if 0
 			if (prAdapter->rWifiVar.ucSigmaTestMode)
 				nicEnterTPTestMode(prAdapter, TEST_MODE_NONE);
-
+#endif
 		}
 
 		if (prAisBssInfo->ucReasonOfDisconnect == DISCONNECT_REASON_CODE_RADIO_LOST) {
@@ -2888,6 +2914,7 @@ VOID aisFsmDisconnect(IN P_ADAPTER_T prAdapter, IN BOOLEAN fgDelayIndication)
 
 	/* 4 <6> Indicate Disconnected Event to Host */
 	aisIndicationOfMediaStateToHost(prAdapter, PARAM_MEDIA_STATE_DISCONNECTED, fgDelayIndication);
+
 
 	/* 4 <7> Trigger AIS FSM */
 	aisFsmSteps(prAdapter, AIS_STATE_IDLE);
@@ -3113,6 +3140,27 @@ VOID aisFsmRunEventDeauthTimeout(IN P_ADAPTER_T prAdapter, ULONG ulParamPtr)
 	aisDeauthXmitComplete(prAdapter, NULL, TX_RESULT_LIFE_TIMEOUT);
 }
 
+#if CFG_SUPPORT_LAST_SEC_MCS_INFO
+VOID aisRxMcsCollectionTimeout(IN P_ADAPTER_T prAdapter, ULONG ulParamPtr)
+{
+	static UINT_8 ucSmapleCnt;
+	UINT_8 ucStaIdx = 0;
+
+	if (prAdapter->prAisBssInfo->prStaRecOfAP == NULL)
+		return;
+
+	ucStaIdx = prAdapter->prAisBssInfo->prStaRecOfAP->ucIndex;
+
+	if (prAdapter->arStaRec[ucStaIdx].fgIsValid && prAdapter->arStaRec[ucStaIdx].fgIsInUse) {
+		prAdapter->arStaRec[ucStaIdx].au4RxVect0Que[ucSmapleCnt] = prAdapter->arStaRec[ucStaIdx].u4RxVector0;
+		prAdapter->arStaRec[ucStaIdx].au4RxVect1Que[ucSmapleCnt] = prAdapter->arStaRec[ucStaIdx].u4RxVector1;
+		ucSmapleCnt = (ucSmapleCnt + 1) % MCS_INFO_SAMPLE_CNT;
+	}
+
+	cnmTimerStartTimer(prAdapter, &prAdapter->rRxMcsInfoTimer, 100);
+}
+#endif
+
 #if defined(CFG_TEST_MGMT_FSM) && (CFG_TEST_MGMT_FSM != 0)
 /*----------------------------------------------------------------------------*/
 /*!
@@ -3240,7 +3288,9 @@ VOID aisFsmScanRequest(IN P_ADAPTER_T prAdapter, IN P_PARAM_SSID_T prSsid, IN PU
 /*----------------------------------------------------------------------------*/
 VOID
 aisFsmScanRequestAdv(IN P_ADAPTER_T prAdapter,
-		     IN UINT_8 ucSsidNum, IN P_PARAM_SSID_T prSsid, IN PUINT_8 pucIe, IN UINT_32 u4IeLength)
+	IN UINT_8 ucSsidNum, IN P_PARAM_SSID_T prSsid,
+	IN UINT_8 ucChannelListNum, IN P_RF_CHANNEL_INFO_T prChnlInfoList,
+	IN PUINT_8 pucIe, IN UINT_32 u4IeLength)
 {
 	UINT_32 i;
 	P_CONNECTION_SETTINGS_T prConnSettings;
@@ -3278,6 +3328,15 @@ aisFsmScanRequestAdv(IN P_ADAPTER_T prAdapter,
 		} else {
 			prAisFsmInfo->u4ScanIELength = 0;
 		}
+
+#if CFG_SCAN_CHANNEL_SPECIFIED
+		if (ucChannelListNum) {
+			prAisFsmInfo->ucScanChannelListNum = ucChannelListNum;
+			kalMemCopy(prAisFsmInfo->arScanChnlInfoList, prChnlInfoList,
+				sizeof(RF_CHANNEL_INFO_T) * prAisFsmInfo->ucScanChannelListNum);
+		} else
+			prAisFsmInfo->ucScanChannelListNum = 0;
+#endif
 
 		if (prAisFsmInfo->eCurrentState == AIS_STATE_NORMAL_TR) {
 			if (prAisBssInfo->eCurrentOPMode == OP_MODE_INFRASTRUCTURE
@@ -3423,7 +3482,7 @@ VOID aisFsmReleaseCh(IN P_ADAPTER_T prAdapter)
 		prMsgChAbort->ucBssIndex = prAdapter->prAisBssInfo->ucBssIndex;
 		prMsgChAbort->ucTokenID = prAisFsmInfo->ucSeqNumOfChReq;
 #if CFG_SUPPORT_DBDC
-		prMsgChAbort->eDBDCBand = prAdapter->prAisBssInfo->eDBDCBand;
+		prMsgChAbort->eDBDCBand = ENUM_BAND_AUTO;
 #endif /*CFG_SUPPORT_DBDC*/
 		mboxSendMsg(prAdapter, MBOX_ID_0, (P_MSG_HDR_T) prMsgChAbort, MSG_SEND_METHOD_BUF);
 	}
@@ -3468,6 +3527,49 @@ VOID aisBssBeaconTimeout(IN P_ADAPTER_T prAdapter)
 		DBGLOG(AIS, EVENT, "aisBssBeaconTimeout\n");
 		aisFsmStateAbort(prAdapter, DISCONNECT_REASON_CODE_RADIO_LOST, TRUE);
 	}
+}				/* end of aisBssBeaconTimeout() */
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief    This function is to inform AIS that corresponding beacon has not
+*           been received for a while and probing is not successful
+*
+* \param[in] prAdapter  Pointer of ADAPTER_T
+*
+* \return none
+*/
+/*----------------------------------------------------------------------------*/
+VOID aisBssLinkDown(IN P_ADAPTER_T prAdapter)
+{
+	P_BSS_INFO_T prAisBssInfo;
+	BOOLEAN fgDoAbortIndication = FALSE;
+	P_CONNECTION_SETTINGS_T prConnSettings;
+
+	ASSERT(prAdapter);
+
+	prAisBssInfo = prAdapter->prAisBssInfo;
+	prConnSettings = &(prAdapter->rWifiVar.rConnSettings);
+
+	/* 4 <1> Diagnose Connection for Beacon Timeout Event */
+	if (prAisBssInfo->eConnectionState == PARAM_MEDIA_STATE_CONNECTED) {
+		if (prAisBssInfo->eCurrentOPMode == OP_MODE_INFRASTRUCTURE) {
+			P_STA_RECORD_T prStaRec = prAisBssInfo->prStaRecOfAP;
+
+			if (prStaRec)
+				fgDoAbortIndication = TRUE;
+
+		} else if (prAisBssInfo->eCurrentOPMode == OP_MODE_IBSS) {
+			fgDoAbortIndication = TRUE;
+		}
+	}
+	/* 4 <2> invoke abort handler */
+	if (fgDoAbortIndication) {
+		prConnSettings->fgIsDisconnectedByNonRequest = TRUE;
+		DBGLOG(AIS, EVENT, "aisBssLinkDown\n");
+		aisFsmStateAbort(prAdapter, DISCONNECT_REASON_CODE_DISASSOCIATED, FALSE);
+	}
+
+    /* kalIndicateStatusAndComplete(prAdapter->prGlueInfo, WLAN_STATUS_SCAN_COMPLETE, NULL, 0); */
 }				/* end of aisBssBeaconTimeout() */
 
 /*----------------------------------------------------------------------------*/

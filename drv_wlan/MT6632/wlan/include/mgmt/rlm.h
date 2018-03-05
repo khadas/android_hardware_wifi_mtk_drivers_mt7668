@@ -273,6 +273,11 @@ VOID rlmFsmEventInit(P_ADAPTER_T prAdapter);
 
 VOID rlmFsmEventUninit(P_ADAPTER_T prAdapter);
 
+VOID rlmReqGeneratePowerCapIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
+
+VOID rlmReqGenerateSupportedChIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
+
+
 VOID rlmReqGenerateHtCapIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
 
 VOID rlmReqGenerateExtCapIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
@@ -288,6 +293,8 @@ VOID rlmRspGenerateErpIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
 VOID rlmGenerateMTKOuiIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
 
 BOOLEAN rlmParseCheckMTKOuiIE(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucBuf, IN PUINT_32 pu4Cap);
+
+VOID rlmGenerateCsaIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
 
 VOID rlmProcessBcn(P_ADAPTER_T prAdapter, P_SW_RFB_T prSwRfb, PUINT_8 pucIE, UINT_16 u2IELength);
 
@@ -371,6 +378,13 @@ WLAN_STATUS rlmTriggerCalBackup(
 
 VOID rlmModifyVhtBwPara(PUINT_8 pucVhtChannelFrequencyS1, PUINT_8 pucVhtChannelFrequencyS2, PUINT_8 pucVhtChannelWidth);
 
+VOID rlmReviseMaxBw(
+	P_ADAPTER_T prAdapter,
+	UINT_8 ucBssIndex,
+	P_ENUM_CHNL_EXT_T peExtend,
+	P_ENUM_CHANNEL_WIDTH_P peChannelWidth,
+	PUINT_8 pucS1,
+	PUINT_8 pucPrimaryCh);
 
 /*******************************************************************************
 *                              F U N C T I O N S

@@ -501,6 +501,10 @@ do { \
 	} \
 }
 
+#define HAL_IS_TX_DIRECT(_prAdapter) FALSE
+
+#define HAL_IS_RX_DIRECT(_prAdapter) FALSE
+
 #endif
 
 #if defined(_HIF_SDIO)
@@ -866,6 +870,10 @@ do { \
 	halWakeUpWiFi(_prAdapter);\
 }
 
+#define HAL_IS_TX_DIRECT(_prAdapter) FALSE
+
+#define HAL_IS_RX_DIRECT(_prAdapter) FALSE
+
 #endif
 
 #if defined(_HIF_USB)
@@ -916,6 +924,10 @@ do { \
 #define HAL_WIFI_FUNC_POWER_ON(_prAdapter) \
 	mtk_usb_vendor_request(_prAdapter->prGlueInfo, 0, DEVICE_VENDOR_REQUEST_OUT, \
 			       VND_REQ_POWER_ON_WIFI, 0, 1, NULL, 0)
+
+#define HAL_WIFI_FUNC_CHIP_RESET(_prAdapter) \
+	mtk_usb_vendor_request(_prAdapter->prGlueInfo, 0, DEVICE_VENDOR_REQUEST_OUT, \
+			       VND_REQ_POWER_ON_WIFI, 1, 1, NULL, 0)
 
 #define HAL_WIFI_FUNC_READY_CHECK(_prAdapter, _checkItem, _pfgResult) \
 do { \
@@ -994,6 +1006,12 @@ do { \
 		_u4ValidBufSize/*temp!!*//*4KByte*/) \
 }
 
+#define HAL_IS_TX_DIRECT(_prAdapter) \
+	((CFG_TX_DIRECT_USB) ? TRUE : FALSE)
+
+#define HAL_IS_RX_DIRECT(_prAdapter) \
+	((CFG_RX_DIRECT_USB) ? TRUE : FALSE)
+
 #endif
 
 #define INVALID_VERSION 0xFFFF /* used by HW/FW version */
@@ -1041,8 +1059,15 @@ VOID halRxProcessMsduReport(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb)
 UINT_32 halTxGetPageCount(IN UINT_32 u4FrameLength, IN BOOLEAN fgIncludeDesc);
 UINT_32 halDumpHifStatus(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucBuf, IN UINT_32 u4Max);
 BOOLEAN halIsPendingRx(IN P_ADAPTER_T prAdapter);
+UINT_32 halGetValidCoalescingBufSize(IN P_ADAPTER_T prAdapter);
 WLAN_STATUS halAllocateIOBuffer(IN P_ADAPTER_T prAdapter);
 WLAN_STATUS halReleaseIOBuffer(IN P_ADAPTER_T prAdapter);
 VOID halDeAggRxPktWorker(struct work_struct *work);
+VOID halRxTasklet(unsigned long data);
+VOID halTxCompleteTasklet(unsigned long data);
 VOID halPrintHifDbgInfo(IN P_ADAPTER_T prAdapter);
+BOOLEAN halIsTxResourceControlEn(IN P_ADAPTER_T prAdapter);
+VOID halTxResourceResetHwTQCounter(IN P_ADAPTER_T prAdapter);
+
+VOID halWpdmaSetup(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable);
 #endif /* _HAL_H */

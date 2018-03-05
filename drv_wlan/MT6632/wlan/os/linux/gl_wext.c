@@ -217,18 +217,16 @@ static const iw_handler rIwPrivHandler[] = {
 
 const struct iw_handler_def wext_handler_def = {
 	.num_standard = 0,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)) || defined(CONFIG_WEXT_PRIV)
+#if defined(CONFIG_WEXT_PRIV) || LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)
 	.num_private = (__u16) sizeof(rIwPrivHandler) / sizeof(iw_handler),
 	.num_private_args = (__u16) sizeof(rIwPrivTable) / sizeof(struct iw_priv_args),
-#endif
+#endif /* CONFIG_WEXT_PRIV || LINUX_VERSION_CODE <= 2.6.32 */
 	.standard = (iw_handler *) NULL,
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,33)) || defined(CONFIG_WEXT_PRIV)
+#if defined(CONFIG_WEXT_PRIV) || LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 32)
 	.private = rIwPrivHandler,
 	.private_args = rIwPrivTable,
-#endif
-#if WIRELESS_EXT >= 17
+#endif /* CONFIG_WEXT_PRIV || LINUX_VERSION_CODE <= 2.6.32 */
 	.get_wireless_stats = wext_get_wireless_stats,
-#endif
 };
 
 /*******************************************************************************
@@ -887,22 +885,22 @@ wext_get_name(IN struct net_device *prNetDev, IN struct iw_request_info *prIwrIn
 
 		switch (eNetWorkType) {
 		case PARAM_NETWORK_TYPE_DS:
-			strcpy(pcName, "IEEE 802.11b");
+			strncpy(pcName, "IEEE 802.11b", sizeof(((struct iwreq *)0)->u.name));
 			break;
 		case PARAM_NETWORK_TYPE_OFDM24:
-			strcpy(pcName, "IEEE 802.11bgn");
+			strncpy(pcName, "IEEE 802.11bgn", sizeof(((struct iwreq *)0)->u.name));
 			break;
 		case PARAM_NETWORK_TYPE_AUTOMODE:
 		case PARAM_NETWORK_TYPE_OFDM5:
-			strcpy(pcName, "IEEE 802.11abgn");
+			strncpy(pcName, "IEEE 802.11abgn", sizeof(((struct iwreq *)0)->u.name));
 			break;
 		case PARAM_NETWORK_TYPE_FH:
 		default:
-			strcpy(pcName, "IEEE 802.11");
+			strncpy(pcName, "IEEE 802.11", sizeof(((struct iwreq *)0)->u.name));
 			break;
 		}
 	} else {
-		strcpy(pcName, "Disconnected");
+		strncpy(pcName, "Disconnected", sizeof(((struct iwreq *)0)->u.name));
 	}
 
 	return 0;
@@ -1345,7 +1343,7 @@ wext_get_ap(IN struct net_device *prNetDev,
 	/* } */
 
 	if (prGlueInfo->eParamMediaStateIndicated == PARAM_MEDIA_STATE_DISCONNECTED) {
-		memset(prAddr, 0, 6);
+		memset(prAddr, 0, sizeof(*prAddr));
 		return 0;
 	}
 
@@ -2066,7 +2064,7 @@ wext_get_essid(IN struct net_device *prNetDev,
 
 	kalMemFree(prSsid, VIR_MEM_TYPE, sizeof(PARAM_SSID_T));
 
-	return 0;
+	return rStatus;
 }				/* wext_get_essid */
 
 #if 0
@@ -2383,7 +2381,7 @@ wext_set_txpow(IN struct net_device *prNetDev,
 		wlanSetAcpiState(prGlueInfo->prAdapter, ePowerState);
 	}
 
-	prGlueInfo->ePowerState = ePowerState;
+		prGlueInfo->ePowerState = ParamDeviceStateD0;
 
 	return ret;
 }				/* wext_set_txpow */
@@ -2959,7 +2957,8 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 		}
 
 		/* PN */
-		memcpy(&prWpiKey->aucPN[0], &prIWEncExt->tx_seq[0], IW_ENCODE_SEQ_MAX_SIZE * 2);
+		memcpy(&prWpiKey->aucPN[0], &prIWEncExt->tx_seq[0], IW_ENCODE_SEQ_MAX_SIZE);
+		memcpy(&prWpiKey->aucPN[8], &prIWEncExt->rx_seq[0], IW_ENCODE_SEQ_MAX_SIZE);
 
 		/* BSSID */
 		memcpy(prWpiKey->aucAddrIndex, prIWEncExt->addr.sa_data, 6);
@@ -3117,6 +3116,12 @@ wext_set_encode_ext(IN struct net_device *prNetDev,
 				memcpy(((PUINT_8) prKey->aucKeyMaterial) + 16, prIWEncExt->key + 24, 8);
 				memcpy((prKey->aucKeyMaterial) + 24, prIWEncExt->key + 16, 8);
 			} else {
+				/* aucKeyMaterial is defined as a 32-elements array */
+				if (prIWEncExt->key_len > 32) {
+					DBGLOG(REQ, ERROR, "prIWEncExt->key_len: %d is too long!\n",
+						prIWEncExt->key_len);
+					return -EFAULT;
+				}
 				memcpy(prKey->aucKeyMaterial, prIWEncExt->key, prIWEncExt->key_len);
 			}
 
@@ -3491,7 +3496,7 @@ int wext_support_ioctl(IN struct net_device *prDev, IN struct ifreq *prIfReq, IN
 
 		ret = wext_get_essid(prDev, NULL, &iwr->u.essid, prExtraBuf);
 		if (ret == 0) {
-			if (copy_to_user(iwr->u.essid.pointer, prExtraBuf, iwr->u.essid.length))
+			if (copy_to_user(iwr->u.essid.pointer, prExtraBuf, IW_ESSID_MAX_SIZE))
 				ret = -EFAULT;
 		}
 
@@ -3624,13 +3629,19 @@ int wext_support_ioctl(IN struct net_device *prDev, IN struct ifreq *prIfReq, IN
 	case SIOCSIWENCODEEXT:	/* 0x8B34, set extended encoding token & mode */
 		if (iwr->u.encoding.pointer) {
 			u4ExtraSize = iwr->u.encoding.length;
+
+			if (u4ExtraSize > sizeof(struct iw_encode_ext)) {
+				ret = -EINVAL;
+				break;
+			}
+
 			prExtraBuf = kalMemAlloc(u4ExtraSize, VIR_MEM_TYPE);
 			if (!prExtraBuf) {
 				ret = -ENOMEM;
 				break;
 			}
 
-			if (copy_from_user(prExtraBuf, iwr->u.encoding.pointer, iwr->u.encoding.length))
+			if (copy_from_user(prExtraBuf, iwr->u.encoding.pointer, u4ExtraSize))
 				ret = -EFAULT;
 		} else if (iwr->u.encoding.length != 0) {
 			ret = -EINVAL;
@@ -3908,17 +3919,22 @@ wext_indicate_wext_event(IN P_GLUE_INFO_T prGlueInfo,
 		goto skip_indicate_event;
 #else
 		if (pucData) {
+			INT_32 i4BufLen = 0;
 			P_PARAM_AUTH_REQUEST_T pAuthReq = (P_PARAM_AUTH_REQUEST_T) pucData;
 			/* under WE-18, only IWEVCUSTOM can be used */
 			u4Cmd = IWEVCUSTOM;
 			pucExtraInfo = aucExtraInfoBuf;
-			pucExtraInfo += sprintf(pucExtraInfo, "MLME-MICHAELMICFAILURE.indication ");
-			pucExtraInfo += sprintf(pucExtraInfo,
+
+			i4BufLen = scnprintf(pucExtraInfo, sizeof(aucExtraInfoBuf),
+									"MLME-MICHAELMICFAILURE.indication ");
+
+			i4BufLen += scnprintf((pucExtraInfo + i4BufLen),
+						(sizeof(aucExtraInfoBuf) - i4BufLen),
 						"%s",
 						(pAuthReq->u4Flags ==
 						 PARAM_AUTH_REQUEST_GROUP_ERROR) ? "groupcast " : "unicast ");
 
-			wrqu.data.length = pucExtraInfo - aucExtraInfoBuf;
+			wrqu.data.length = i4BufLen;
 			pucExtraInfo = aucExtraInfoBuf;
 		}
 #endif /* WIRELESS_EXT < 15 */

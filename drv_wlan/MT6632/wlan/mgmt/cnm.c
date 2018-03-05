@@ -409,6 +409,95 @@ VOID cnmChMngrHandleChEvent(P_ADAPTER_T prAdapter, P_WIFI_EVENT_T prEvent)
 	prCnmInfo->fgChGranted = TRUE;
 }
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID cnmRadarDetectEvent(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
+{
+	P_EVENT_RDD_REPORT_T prEventBody;
+	P_BSS_INFO_T prBssInfo;
+	P_MSG_P2P_RADAR_DETECT_T prP2pRddDetMsg;
+	UINT_8 ucBssIndex;
+
+	DBGLOG(CNM, INFO, "cnmRadarDetectEvent.\n");
+
+	prEventBody = (P_EVENT_RDD_REPORT_T)(prEvent->aucBuffer);
+
+	prP2pRddDetMsg = (P_MSG_P2P_RADAR_DETECT_T) cnmMemAlloc(prAdapter,
+					RAM_TYPE_MSG, sizeof(*prP2pRddDetMsg));
+
+	if (!prP2pRddDetMsg) {
+		DBGLOG(CNM, ERROR, "cnmMemAlloc for prP2pRddDetMsg failed!\n");
+		return;
+	}
+
+	prP2pRddDetMsg->rMsgHdr.eMsgId = MID_CNM_P2P_RADAR_DETECT;
+
+	for (ucBssIndex = 0; ucBssIndex < BSS_INFO_NUM; ucBssIndex++) {
+		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+		if (prBssInfo && prBssInfo->fgIsDfsActive) {
+			prP2pRddDetMsg->ucBssIndex = ucBssIndex;
+			break;
+		}
+	}
+
+	p2pFuncSetDfsState(DFS_STATE_DETECTED);
+
+	p2pFuncRadarInfoInit();
+
+	g_rP2pRadarInfo.ucRadarReportMode = prEventBody->ucRadarReportMode;
+	g_rP2pRadarInfo.ucRddIdx = prEventBody->ucRddIdx;
+	g_rP2pRadarInfo.ucLongDetected = prEventBody->ucLongDetected;
+	g_rP2pRadarInfo.ucPeriodicDetected = prEventBody->ucPeriodicDetected;
+	g_rP2pRadarInfo.ucLPBNum = prEventBody->ucLPBNum;
+	g_rP2pRadarInfo.ucPPBNum = prEventBody->ucPPBNum;
+	g_rP2pRadarInfo.ucLPBPeriodValid = prEventBody->ucLPBPeriodValid;
+	g_rP2pRadarInfo.ucLPBWidthValid = prEventBody->ucLPBWidthValid;
+	g_rP2pRadarInfo.ucPRICountM1 = prEventBody->ucPRICountM1;
+	g_rP2pRadarInfo.ucPRICountM1TH = prEventBody->ucPRICountM1TH;
+	g_rP2pRadarInfo.ucPRICountM2 = prEventBody->ucPRICountM2;
+	g_rP2pRadarInfo.ucPRICountM2TH = prEventBody->ucPRICountM2TH;
+	g_rP2pRadarInfo.u4PRI1stUs = prEventBody->u4PRI1stUs;
+	kalMemCopy(&g_rP2pRadarInfo.arLpbContent[0], &prEventBody->arLpbContent[0],
+				prEventBody->ucLPBNum*sizeof(LONG_PULSE_BUFFER_T));
+	kalMemCopy(&g_rP2pRadarInfo.arPpbContent[0], &prEventBody->arPpbContent[0],
+				prEventBody->ucPPBNum*sizeof(PERIODIC_PULSE_BUFFER_T));
+
+	mboxSendMsg(prAdapter, MBOX_ID_0, (P_MSG_HDR_T)prP2pRddDetMsg, MSG_SEND_METHOD_BUF);
+}
+
+VOID cnmCsaDoneEvent(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
+{
+	P_BSS_INFO_T prBssInfo;
+	P_MSG_P2P_CSA_DONE_T prP2pCsaDoneMsg;
+	UINT_8 ucBssIndex;
+
+	DBGLOG(CNM, INFO, "cnmCsaDoneEvent.\n");
+
+	prP2pCsaDoneMsg = (P_MSG_P2P_CSA_DONE_T) cnmMemAlloc(prAdapter,
+					RAM_TYPE_MSG, sizeof(*prP2pCsaDoneMsg));
+
+	if (!prP2pCsaDoneMsg) {
+		DBGLOG(CNM, ERROR, "cnmMemAlloc for prP2pCsaDoneMsg failed!\n");
+		return;
+	}
+
+	prAdapter->rWifiVar.fgCsaInProgress = FALSE;
+
+	prP2pCsaDoneMsg->rMsgHdr.eMsgId = MID_CNM_P2P_CSA_DONE;
+
+	for (ucBssIndex = 0; ucBssIndex < BSS_INFO_NUM; ucBssIndex++) {
+		prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
+
+		if (prBssInfo && prBssInfo->fgIsDfsActive) {
+			prP2pCsaDoneMsg->ucBssIndex = ucBssIndex;
+			break;
+		}
+	}
+
+	mboxSendMsg(prAdapter, MBOX_ID_0, (P_MSG_HDR_T)prP2pCsaDoneMsg, MSG_SEND_METHOD_BUF);
+}
+#endif
+
 /*----------------------------------------------------------------------------*/
 /*!
 * @brief This function is invoked for P2P or BOW networks
@@ -697,6 +786,9 @@ static UINT_8 cnmGetAPBwPermitted(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex)
 
 		for (i = 0 ; i < BSS_P2P_NUM; i++) {
 
+			if (!prAdapter->rWifiVar.aprP2pRoleFsmInfo[i])
+				continue;
+
 			if (prAdapter->rWifiVar.aprP2pRoleFsmInfo[i]->ucBssIndex == ucBssIndex)
 				break;
 
@@ -816,6 +908,8 @@ UINT_8 cnmGetBssMaxBw(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex)
 	UINT_8 ucMaxBandwidth = MAX_BW_80_80_MHZ; /*chip capability*/
 	P_BSS_DESC_T    prBssDesc = NULL;
 	ENUM_BAND_T eBand = BAND_NULL;
+	P_P2P_ROLE_FSM_INFO_T prP2pRoleFsmInfo = (P_P2P_ROLE_FSM_INFO_T) NULL;
+	P_P2P_CONNECTION_REQ_INFO_T prP2pConnReqInfo = (P_P2P_CONNECTION_REQ_INFO_T) NULL;
 
 	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, ucBssIndex);
 
@@ -844,27 +938,42 @@ UINT_8 cnmGetBssMaxBw(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex)
 		if (ucMaxBandwidth > prAdapter->rWifiVar.ucStaBandwidth)
 			ucMaxBandwidth = prAdapter->rWifiVar.ucStaBandwidth;
 	} else if (IS_BSS_P2P(prBssInfo)) {
-		/* AP mode */
-		if (p2pFuncIsAPMode(prAdapter->rWifiVar.prP2PConnSettings[prBssInfo->u4PrivateData])) {
+		prP2pRoleFsmInfo = p2pFuncGetRoleByBssIdx(prAdapter, ucBssIndex);
+		if (!prAdapter->rWifiVar.ucApChnlDefFromCfg && prP2pRoleFsmInfo
+			&& prBssInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT) {
+			prP2pConnReqInfo = &(prP2pRoleFsmInfo->rConnReqInfo);
+			ucMaxBandwidth = prP2pConnReqInfo->eChnlBw;
+		} else {
+			/* AP mode */
+			if (p2pFuncIsAPMode(prAdapter->rWifiVar.prP2PConnSettings[prBssInfo->u4PrivateData])) {
+				if (prBssInfo->eBand == BAND_2G4)
+					ucMaxBandwidth = prAdapter->rWifiVar.ucAp2gBandwidth;
+				else
+					ucMaxBandwidth = prAdapter->rWifiVar.ucAp5gBandwidth;
 
-			if (prBssInfo->eBand == BAND_2G4)
-				ucMaxBandwidth = prAdapter->rWifiVar.ucAp2gBandwidth;
-			else
-				ucMaxBandwidth = prAdapter->rWifiVar.ucAp5gBandwidth;
+				if (ucMaxBandwidth > prAdapter->rWifiVar.ucApBandwidth)
+					ucMaxBandwidth = prAdapter->rWifiVar.ucApBandwidth;
+			}
+			/* P2P mode */
+			else {
+				if (prBssInfo->eBand == BAND_2G4)
+					ucMaxBandwidth = prAdapter->rWifiVar.ucP2p2gBandwidth;
+				else
+					ucMaxBandwidth = prAdapter->rWifiVar.ucP2p5gBandwidth;
+			}
 
-			if (ucMaxBandwidth > prAdapter->rWifiVar.ucApBandwidth)
-				ucMaxBandwidth = prAdapter->rWifiVar.ucApBandwidth;
 		}
-		/* P2P mode */
-		else {
-			if (prBssInfo->eBand == BAND_2G4)
-				ucMaxBandwidth = prAdapter->rWifiVar.ucP2p2gBandwidth;
-			else
-				ucMaxBandwidth = prAdapter->rWifiVar.ucP2p5gBandwidth;
-		}
+
 	}
 
 	return ucMaxBandwidth;
+}
+
+
+UINT_8 cnmGetBssMaxBwToChnlBW(P_ADAPTER_T prAdapter, UINT_8 ucBssIndex)
+{
+	UINT_8 ucMaxBandwidth = cnmGetBssMaxBw(prAdapter, ucBssIndex);
+	return ucMaxBandwidth == MAX_BW_20MHZ ? ucMaxBandwidth : (ucMaxBandwidth - 1);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -952,6 +1061,10 @@ P_BSS_INFO_T cnmGetBssInfoAndInit(P_ADAPTER_T prAdapter, ENUM_NETWORK_TYPE_T eNe
 			prBssInfo->ucBssIndex = ucBssIndex;
 			prBssInfo->eNetworkType = eNetworkType;
 			prBssInfo->ucOwnMacIndex = ucOwnMacIdx;
+#if (CFG_HW_WMM_BY_BSS == 1)
+			prBssInfo->ucWmmQueSet = DEFAULT_HW_WMM_INDEX;
+			prBssInfo->fgIsWmmInited = FALSE;
+#endif
 			break;
 		}
 	}
@@ -1014,11 +1127,33 @@ VOID cnmUpdateDbdcSetting(IN P_ADAPTER_T prAdapter, IN BOOLEAN fgDbdcEn)
 	P_BSS_INFO_T			prBssInfo;
 	UINT_8					ucMaxBw;
 
-	DBGLOG(CNM, INFO, "DBDC %s\n", fgDbdcEn?"Enable":"Disable");
+	DBGLOG(CNM, INFO, "DBDC %s\n", fgDbdcEn ? "Enable" : "Disable");
 
 	/* Parameter decision */
+#if (CFG_HW_WMM_BY_BSS == 1)
+	if (fgDbdcEn) {
+		UINT_8 ucWmmSetBitmapPerBSS;
+		/*
+		 * As DBDC enabled, for BSS use 2.4g Band, assign related WmmGroupSet bitmask to 1.
+		 * This is used to indicate the WmmGroupSet is associated to Band#1 (otherwise, use for band#0)
+		 */
+		for (ucBssIndex = 0; ucBssIndex < BSS_INFO_NUM; ucBssIndex++) {
+			prBssInfo = prAdapter->aprBssInfo[ucBssIndex];
+
+			if (!prBssInfo || prBssInfo->fgIsInUse == FALSE)
+				continue;
+
+			if (prBssInfo->eBand == BAND_2G4) {
+				ucWmmSetBitmapPerBSS = prBssInfo->ucWmmQueSet;
+				ucWmmSetBitmap |= BIT(ucWmmSetBitmapPerBSS);
+			}
+		}
+		ucWmmSetBitmap |= BIT(MAX_HW_WMM_INDEX); /* For P2P Device*/
+	}
+#else
 	if (fgDbdcEn)
 		ucWmmSetBitmap |= BIT(DBDC_2G_WMM_INDEX);
+#endif
 
 	/* Send event to FW */
 	prCmdBody = (P_CMD_DBDC_SETTING_T)&rDbdcSetting;
@@ -1137,11 +1272,14 @@ VOID cnmGetDbdcCapability(
 	/* BSS index */
 	prDbdcCap->ucBssIndex = ucBssIndex;
 
+#if (CFG_HW_WMM_BY_BSS == 0)
 	/* WMM set */
 	if (eRfBand == BAND_5G)
 		prDbdcCap->ucWmmSetIndex = DBDC_5G_WMM_INDEX;
 	else
-		prDbdcCap->ucWmmSetIndex = DBDC_2G_WMM_INDEX;
+		prDbdcCap->ucWmmSetIndex =
+			(prAdapter->rWifiVar.ucDbdcMode == DBDC_MODE_DISABLED) ? DBDC_5G_WMM_INDEX : DBDC_2G_WMM_INDEX;
+#endif
 
 	/* Nss & band 0/1 */
 	switch (prAdapter->rWifiVar.ucDbdcMode) {
@@ -1151,16 +1289,11 @@ VOID cnmGetDbdcCapability(
 			prDbdcCap->ucNss = wlanGetSupportNss(prAdapter, ucBssIndex);
 		else
 			prDbdcCap->ucNss = ucNss;
-		prDbdcCap->ucDbdcBandIndex = ENUM_BAND_0;
 		break;
 
 	case DBDC_MODE_STATIC:
 		/* Static DBDC mode, 1SS only */
 		prDbdcCap->ucNss = 1;
-		if (eRfBand == BAND_5G)
-			prDbdcCap->ucDbdcBandIndex = ENUM_BAND_0;
-		else
-			prDbdcCap->ucDbdcBandIndex = ENUM_BAND_1;
 		break;
 
 	case DBDC_MODE_DYNAMIC:
@@ -1168,7 +1301,6 @@ VOID cnmGetDbdcCapability(
 			prDbdcCap->ucNss = 1;
 		else
 			prDbdcCap->ucNss = wlanGetSupportNss(prAdapter, ucBssIndex);
-		prDbdcCap->ucDbdcBandIndex = ENUM_BAND_AUTO;
 		break;
 
 	default:
@@ -1188,8 +1320,18 @@ VOID cnmDbdcEnableDecision(
 	if (prAdapter->rWifiVar.ucDbdcMode != DBDC_MODE_DYNAMIC)
 		return;
 
-	if (prAdapter->rWifiVar.fgDbDcModeEn)
+	if (prAdapter->rWifiVar.fgDbDcModeEn) {
+		if (timerPendingTimer(&prAdapter->rWifiVar.rDBDCSwitchGuardTimer)) {
+			/* update timer for connection retry */
+			DBGLOG(CNM, INFO, "DBDC guard time extend\n");
+			cnmTimerStopTimer(prAdapter,
+								&prAdapter->rWifiVar.rDBDCSwitchGuardTimer);
+			cnmTimerStartTimer(prAdapter,
+								&prAdapter->rWifiVar.rDBDCSwitchGuardTimer,
+								DBDC_SWITCH_GUARD_TIME);
+		}
 		return;
+	}
 
 	if (timerPendingTimer(&prAdapter->rWifiVar.rDBDCSwitchGuardTimer))
 		return;
@@ -1242,8 +1384,18 @@ VOID cnmDbdcDisableDecision(IN P_ADAPTER_T prAdapter,	IN UINT_8 ucChangedBssInde
 	if (prAdapter->rWifiVar.ucDbdcMode != DBDC_MODE_DYNAMIC)
 		return;
 
-	if (!prAdapter->rWifiVar.fgDbDcModeEn)
+	if (!prAdapter->rWifiVar.fgDbDcModeEn) {
+		if (timerPendingTimer(&prAdapter->rWifiVar.rDBDCSwitchGuardTimer)) {
+			/* update timer for connection retry */
+			DBGLOG(CNM, INFO, "DBDC guard time extend\n");
+			cnmTimerStopTimer(prAdapter,
+								&prAdapter->rWifiVar.rDBDCSwitchGuardTimer);
+			cnmTimerStartTimer(prAdapter,
+								&prAdapter->rWifiVar.rDBDCSwitchGuardTimer,
+								DBDC_SWITCH_GUARD_TIME);
+		}
 		return;
+	}
 
 	if (timerPendingTimer(&prAdapter->rWifiVar.rDBDCDisableCountdownTimer))
 		return;
@@ -1348,3 +1500,44 @@ VOID cnmDbdcDecision(IN P_ADAPTER_T prAdapter, IN ULONG plParamPtr)
 
 #endif /*CFG_SUPPORT_DBDC*/
 
+#if (CFG_HW_WMM_BY_BSS == 1)
+/*----------------------------------------------------------------------------*/
+/*!
+* @brief    Search available HW WMM index.
+*
+* @param (none)
+*
+* @return
+*/
+/*----------------------------------------------------------------------------*/
+UINT_8 cnmWmmIndexDecision(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo)
+{
+	UINT_8 ucWmmIndex;
+
+	for (ucWmmIndex = 0; ucWmmIndex < HW_WMM_NUM; ucWmmIndex++) {
+		if (prBssInfo && prBssInfo->fgIsInUse && prBssInfo->fgIsWmmInited == FALSE) {
+			if (!(prAdapter->ucHwWmmEnBit & BIT(ucWmmIndex))) {
+				prAdapter->ucHwWmmEnBit |= BIT(ucWmmIndex);
+				prBssInfo->fgIsWmmInited = TRUE;
+				break;
+			}
+		}
+	}
+	return (ucWmmIndex < HW_WMM_NUM) ? ucWmmIndex : MAX_HW_WMM_INDEX;
+}
+/*----------------------------------------------------------------------------*/
+/*!
+* @brief    Free BSS HW WMM index.
+*
+* @param (none)
+*
+* @return None
+*/
+/*----------------------------------------------------------------------------*/
+VOID cnmFreeWmmIndex(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo)
+{
+	prAdapter->ucHwWmmEnBit &= (~BIT(prBssInfo->ucWmmQueSet));
+	prBssInfo->ucWmmQueSet = DEFAULT_HW_WMM_INDEX;
+	prBssInfo->fgIsWmmInited = FALSE;
+}
+#endif /* #if (CFG_HW_WMM_BY_BSS == 1) */

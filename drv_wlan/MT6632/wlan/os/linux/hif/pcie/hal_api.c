@@ -494,7 +494,8 @@ VOID halSetFWOwn(IN P_ADAPTER_T prAdapter, IN BOOLEAN fgEnableGlobalInt)
 
 VOID halWakeUpWiFi(IN P_ADAPTER_T prAdapter)
 {
-	BOOLEAN fgResult;
+	BOOLEAN fgResult, fgOwnResult;
+	UINT_8 ucCount = 0;
 
 #if CFG_SUPPORT_PMIC_SPI_CLOCK_SWITCH
 	UINT_32 u4Value = 0;
@@ -505,17 +506,38 @@ VOID halWakeUpWiFi(IN P_ADAPTER_T prAdapter)
 		HAL_MCR_WR(prAdapter, TOP_CKGEN2_CR_PMIC_CK_MANUAL, (TOP_CKGEN2_CR_PMIC_CK_MANUAL_MASK|u4Value));
 	HAL_MCR_RD(prAdapter, TOP_CKGEN2_CR_PMIC_CK_MANUAL, &u4Value);
 	DBGLOG(INIT, INFO, "PMIC SPI clock switch = %s\n",
-		(TOP_CKGEN2_CR_PMIC_CK_MANUAL_MASK&u4Value)?"SUCCESS":"FAIL");
+		(TOP_CKGEN2_CR_PMIC_CK_MANUAL_MASK&u4Value) ? "SUCCESS" : "FAIL");
 #endif
 
 	ASSERT(prAdapter);
 
+	DBGLOG(INIT, INFO, "Power on Wi-Fi....\n");
+	fgOwnResult = FALSE;
+	HAL_WIFI_FUNC_READY_CHECK(prAdapter, WIFI_FUNC_INIT_DONE, &fgResult);
+
+	while (!fgResult && !fgOwnResult) {
+		HAL_LP_OWN_CLR(prAdapter, &fgOwnResult);
+		kalMdelay(50);
+		HAL_WIFI_FUNC_READY_CHECK(prAdapter, WIFI_FUNC_INIT_DONE, &fgResult);
+
+		ucCount++;
+
+		if (ucCount >= 5) {
+			DBGLOG(INIT, WARN, "Power on failed!!!\n");
+			break;
+		}
+	}
+
+	prAdapter->fgIsFwOwn = FALSE;
+
+#if 0
 	HAL_LP_OWN_RD(prAdapter, &fgResult);
 
 	if (fgResult)
 		prAdapter->fgIsFwOwn = FALSE;
 	else
 		HAL_LP_OWN_CLR(prAdapter, &fgResult);
+#endif
 }
 
 VOID halTxCancelSendingCmd(IN P_ADAPTER_T prAdapter, IN P_CMD_INFO_T prCmdInfo)
@@ -637,7 +659,7 @@ UINT_32 halGetMsduTokenFreeCnt(IN P_ADAPTER_T prAdapter)
 {
 	P_MSDU_TOKEN_INFO_T prTokenInfo = &prAdapter->prGlueInfo->rHifInfo.rTokenInfo;
 
-	return (HIF_TX_MSDU_TOKEN_NUM - prTokenInfo->i4UsedCnt);
+	return HIF_TX_MSDU_TOKEN_NUM - prTokenInfo->i4UsedCnt;
 }
 
 P_MSDU_TOKEN_ENTRY_T halGetMsduTokenEntry(IN P_ADAPTER_T prAdapter, UINT_32 u4TokenNum)
@@ -1169,7 +1191,7 @@ VOID halWpdmaFreeRing(P_GLUE_INFO_T prGlueInfo)
 	}
 }
 
-static VOID halWpdmaSetup(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
+VOID halWpdmaSetup(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 {
 	struct mt66xx_chip_info *chip_info = prGlueInfo->prAdapter->chip_info;
 
@@ -1201,6 +1223,7 @@ VOID halEnhancedWpdmaConfig(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 		GloCfg.field_1.fifo_little_endian = 1;
 
 		GloCfg.field_1.tx_bt_size_bit21 = 1;
+		GloCfg.field_1.sw_rst = 0;
 		GloCfg.field_1.first_token = 1;
 		GloCfg.field_1.omit_tx_info = 1;
 		GloCfg.field_1.reserve_30 = 1;
@@ -1214,6 +1237,7 @@ VOID halEnhancedWpdmaConfig(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 	} else {
 		GloCfg.field_1.EnableRxDMA = 0;
 		GloCfg.field_1.EnableTxDMA = 0;
+		GloCfg.field_1.sw_rst = 1;
 
 		IntMask.field.rx_done_0 = 0;
 		IntMask.field.rx_done_1 = 0;
@@ -1265,6 +1289,7 @@ VOID halWpdmaConfig(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 		GloCfg.field.omit_tx_info = 1;
 		GloCfg.field.fifo_little_endian = 1;
 		GloCfg.field.multi_dma_en = 3;
+		GloCfg.field.sw_rst = 0;
 		GloCfg.field.clk_gate_dis = 1;
 
 		IntMask.field.rx_done_0 = 1;
@@ -1276,7 +1301,7 @@ VOID halWpdmaConfig(P_GLUE_INFO_T prGlueInfo, BOOLEAN enable)
 		GloCfg.field.EnableRxDMA = 0;
 		GloCfg.field.EnableTxDMA = 0;
 		GloCfg.field.multi_dma_en = 2;
-
+		GloCfg.field.sw_rst = 1;
 		IntMask.field.rx_done_0 = 0;
 		IntMask.field.rx_done_1 = 0;
 		IntMask.field.tx_done_0 = 0;
@@ -1631,6 +1656,18 @@ BOOLEAN halIsPendingRx(IN P_ADAPTER_T prAdapter)
 	return FALSE;
 }
 
+UINT_32 halGetValidCoalescingBufSize(IN P_ADAPTER_T prAdapter)
+{
+	UINT_32 u4BufSize;
+
+	if (HIF_TX_COALESCING_BUFFER_SIZE > HIF_RX_COALESCING_BUFFER_SIZE)
+		u4BufSize = HIF_TX_COALESCING_BUFFER_SIZE;
+	else
+		u4BufSize = HIF_RX_COALESCING_BUFFER_SIZE;
+
+	return u4BufSize;
+}
+
 WLAN_STATUS halAllocateIOBuffer(IN P_ADAPTER_T prAdapter)
 {
 	return WLAN_STATUS_SUCCESS;
@@ -1647,6 +1684,16 @@ VOID halProcessSoftwareInterrupt(IN P_ADAPTER_T prAdapter)
 }
 
 VOID halDeAggRxPktWorker(struct work_struct *work)
+{
+
+}
+
+VOID halRxTasklet(unsigned long data)
+{
+
+}
+
+VOID halTxCompleteTasklet(unsigned long data)
 {
 
 }
@@ -1677,5 +1724,14 @@ WLAN_STATUS halHifPowerOffWifi(IN P_ADAPTER_T prAdapter)
 VOID halPrintHifDbgInfo(IN P_ADAPTER_T prAdapter)
 {
 
+}
+
+BOOLEAN halIsTxResourceControlEn(IN P_ADAPTER_T prAdapter)
+{
+	return FALSE;
+}
+
+VOID halTxResourceResetHwTQCounter(IN P_ADAPTER_T prAdapter)
+{
 }
 

@@ -160,6 +160,8 @@ VOID kalP2PSetCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_32 u4Cipher, IN UINT_8
 
 BOOLEAN kalP2PGetCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIdx);
 
+BOOLEAN kalP2PGetWepCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIdx);
+
 BOOLEAN kalP2PGetTkipCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIdx);
 
 BOOLEAN kalP2PGetCcmpCipher(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIdx);
@@ -230,7 +232,7 @@ kalP2PIndicateChannelExpired(IN P_GLUE_INFO_T prGlueInfo,
 			     IN UINT_64 u8SeqNum,
 			     IN UINT_32 u4ChannelNum, IN ENUM_BAND_T eBand, IN ENUM_CHNL_EXT_T eSco);
 
-#if CFG_WPS_DISCONNECT  || (LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0))
+#if CFG_WPS_DISCONNECT  || (KERNEL_VERSION(4, 4, 0) <= CFG80211_VERSION_CODE)
 VOID
 kalP2PGCIndicateConnectionStatus(IN P_GLUE_INFO_T prGlueInfo,
 				 IN UINT_8 ucRoleIndex,
@@ -248,6 +250,14 @@ kalP2PGCIndicateConnectionStatus(IN P_GLUE_INFO_T prGlueInfo,
 VOID
 kalP2PGOStationUpdate(IN P_GLUE_INFO_T prGlueInfo,
 		      IN UINT_8 ucRoleIndex, IN P_STA_RECORD_T prCliStaRec, IN BOOLEAN fgIsNew);
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID
+kalP2PRddDetectUpdate(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIndex);
+
+VOID
+kalP2PCacFinishedUpdate(IN P_GLUE_INFO_T prGlueInfo, IN UINT_8 ucRoleIndex);
+#endif
 
 #if CFG_SUPPORT_HOTSPOT_WPS_MANAGER
 

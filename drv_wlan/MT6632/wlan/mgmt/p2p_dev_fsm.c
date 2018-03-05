@@ -90,34 +90,40 @@ UINT_8 p2pDevFsmInit(IN P_ADAPTER_T prAdapter)
 
 		prP2pBssInfo = cnmGetBssInfoAndInit(prAdapter, NETWORK_TYPE_P2P, TRUE);
 
-		COPY_MAC_ADDR(prP2pBssInfo->aucOwnMacAddr, prAdapter->rMyMacAddr);
-		prP2pBssInfo->aucOwnMacAddr[0] ^= 0x2;	/* change to local administrated address */
+		if (prP2pBssInfo != NULL) {
+			COPY_MAC_ADDR(prP2pBssInfo->aucOwnMacAddr, prAdapter->rMyMacAddr);
+			prP2pBssInfo->aucOwnMacAddr[0] ^= 0x2;	/* change to local administrated address */
 
-		prP2pDevFsmInfo->ucBssIndex = prP2pBssInfo->ucBssIndex;
+			prP2pDevFsmInfo->ucBssIndex = prP2pBssInfo->ucBssIndex;
 
-		prP2pBssInfo->eCurrentOPMode = OP_MODE_P2P_DEVICE;
-		prP2pBssInfo->ucConfigAdHocAPMode = AP_MODE_11G_P2P;
-		prP2pBssInfo->u2HwDefaultFixedRateCode = RATE_OFDM_6M;
+			prP2pBssInfo->eCurrentOPMode = OP_MODE_P2P_DEVICE;
+			prP2pBssInfo->ucConfigAdHocAPMode = AP_MODE_11G_P2P;
+			prP2pBssInfo->u2HwDefaultFixedRateCode = RATE_OFDM_6M;
 
-		prP2pBssInfo->eBand = BAND_2G4;
-		prP2pBssInfo->eDBDCBand = ENUM_BAND_0;
-		prP2pBssInfo->ucWmmQueSet = DBDC_2G_WMM_INDEX;
+			prP2pBssInfo->eBand = BAND_2G4;
+			prP2pBssInfo->eDBDCBand = ENUM_BAND_0;
+#if (CFG_HW_WMM_BY_BSS == 1)
+			prP2pBssInfo->ucWmmQueSet = MAX_HW_WMM_INDEX;
+#else
+			prP2pBssInfo->ucWmmQueSet =
+				(prAdapter->rWifiVar.ucDbdcMode == DBDC_MODE_DISABLED) ?
+				DBDC_5G_WMM_INDEX : DBDC_2G_WMM_INDEX;
+#endif
+			prP2pBssInfo->ucPhyTypeSet = prAdapter->rWifiVar.ucAvailablePhyTypeSet & PHY_TYPE_SET_802_11GN;
 
-		prP2pBssInfo->ucPhyTypeSet = prAdapter->rWifiVar.ucAvailablePhyTypeSet & PHY_TYPE_SET_802_11GN;
+			prP2pBssInfo->ucNonHTBasicPhyType = (UINT_8)
+			    rNonHTApModeAttributes[prP2pBssInfo->ucConfigAdHocAPMode].ePhyTypeIndex;
+			prP2pBssInfo->u2BSSBasicRateSet =
+			    rNonHTApModeAttributes[prP2pBssInfo->ucConfigAdHocAPMode].u2BSSBasicRateSet;
 
-		prP2pBssInfo->ucNonHTBasicPhyType = (UINT_8)
-		    rNonHTApModeAttributes[prP2pBssInfo->ucConfigAdHocAPMode].ePhyTypeIndex;
-		prP2pBssInfo->u2BSSBasicRateSet =
-		    rNonHTApModeAttributes[prP2pBssInfo->ucConfigAdHocAPMode].u2BSSBasicRateSet;
+			prP2pBssInfo->u2OperationalRateSet =
+			    rNonHTPhyAttributes[prP2pBssInfo->ucNonHTBasicPhyType].u2SupportedRateSet;
+			prP2pBssInfo->u4PrivateData = 0;/* TH3 Huang */
 
-		prP2pBssInfo->u2OperationalRateSet =
-		    rNonHTPhyAttributes[prP2pBssInfo->ucNonHTBasicPhyType].u2SupportedRateSet;
-		prP2pBssInfo->u4PrivateData = 0;/* TH3 Huang */
-
-		rateGetDataRatesFromRateSet(prP2pBssInfo->u2OperationalRateSet,
+			rateGetDataRatesFromRateSet(prP2pBssInfo->u2OperationalRateSet,
 					    prP2pBssInfo->u2BSSBasicRateSet,
 					    prP2pBssInfo->aucAllSupportedRates, &prP2pBssInfo->ucAllSupportedRatesLen);
-
+		}
 		prP2pChnlReqInfo = &prP2pDevFsmInfo->rChnlReqInfo;
 		LINK_INITIALIZE(&prP2pChnlReqInfo->rP2pChnlReqLink);
 
@@ -297,7 +303,19 @@ p2pDevFsmStateTransition(IN P_ADAPTER_T prAdapter,
 {
 	BOOLEAN fgIsLeaveState = (BOOLEAN) FALSE;
 
+	ASSERT(prP2pDevFsmInfo);
+	if (!prP2pDevFsmInfo) {
+		DBGLOG(P2P, ERROR, "prP2pDevFsmInfo is NULL!\n");
+		return;
+	}
+
 	ASSERT(prP2pDevFsmInfo->ucBssIndex == P2P_DEV_BSS_INDEX);
+	if (prP2pDevFsmInfo->ucBssIndex != P2P_DEV_BSS_INDEX) {
+		DBGLOG(P2P, ERROR,
+			"prP2pDevFsmInfo->ucBssIndex %s should be P2P_DEV_BSS_INDEX(%d)!\n",
+			prP2pDevFsmInfo->ucBssIndex, P2P_DEV_BSS_INDEX);
+		return;
+	}
 
 	do {
 		if (!IS_BSS_ACTIVE(prAdapter->aprBssInfo[prP2pDevFsmInfo->ucBssIndex])) {
@@ -664,6 +682,8 @@ p2pDevFsmRunEventChnlGrant(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr, IN
 
 	do {
 		ASSERT((prAdapter != NULL) && (prMsgHdr != NULL) && (prP2pDevFsmInfo != NULL));
+		if ((prAdapter == NULL) || (prMsgHdr == NULL) || (prP2pDevFsmInfo == NULL))
+			break;
 
 		prMsgChGrant = (P_MSG_CH_GRANT_T) prMsgHdr;
 		prChnlReqInfo = &(prP2pDevFsmInfo->rChnlReqInfo);
@@ -697,89 +717,87 @@ VOID p2pDevFsmRunEventMgmtTx(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
 	P_P2P_CHNL_REQ_INFO_T prP2pChnlReqInfo = (P_P2P_CHNL_REQ_INFO_T) NULL;
 	P_P2P_MGMT_TX_REQ_INFO_T prP2pMgmtTxReqInfo = (P_P2P_MGMT_TX_REQ_INFO_T) NULL;
 
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prMsgHdr != NULL));
+	prMgmtTxMsg = (P_MSG_P2P_MGMT_TX_REQUEST_T) prMsgHdr;
 
-		prMgmtTxMsg = (P_MSG_P2P_MGMT_TX_REQUEST_T) prMsgHdr;
+	if ((prMgmtTxMsg->ucBssIdx != P2P_DEV_BSS_INDEX) && (IS_NET_ACTIVE(prAdapter, prMgmtTxMsg->ucBssIdx))) {
+		DBGLOG(P2P, TRACE, " Role Interface\n");
+		p2pFuncTxMgmtFrame(prAdapter,
+				   prMgmtTxMsg->ucBssIdx,
+				   prMgmtTxMsg->prMgmtMsduInfo, prMgmtTxMsg->fgNoneCckRate);
+		goto error;
+	}
 
-		if ((prMgmtTxMsg->ucBssIdx != P2P_DEV_BSS_INDEX) && (IS_NET_ACTIVE(prAdapter, prMgmtTxMsg->ucBssIdx))) {
-			DBGLOG(P2P, TRACE, " Role Interface\n");
-			p2pFuncTxMgmtFrame(prAdapter,
-					   prMgmtTxMsg->ucBssIdx,
-					   prMgmtTxMsg->prMgmtMsduInfo, prMgmtTxMsg->fgNoneCckRate);
-			break;
+	DBGLOG(P2P, TRACE, " Device Interface\n");
+	DBGLOG(P2P, STATE, "p2pDevFsmRunEventMgmtTx\n");
+
+	prMgmtTxMsg->ucBssIdx = P2P_DEV_BSS_INDEX;
+
+	prP2pDevFsmInfo = prAdapter->rWifiVar.prP2pDevFsmInfo;
+
+	if (prP2pDevFsmInfo == NULL) {
+		DBGLOG(P2P, ERROR, "prP2pDevFsmInfo is NULL!\n");
+		goto error;
+	}
+
+	prP2pChnlReqInfo = &(prP2pDevFsmInfo->rChnlReqInfo);
+	prP2pMgmtTxReqInfo = &(prP2pDevFsmInfo->rMgmtTxInfo);
+
+	if ((!prMgmtTxMsg->fgIsOffChannel) ||
+	    ((prP2pDevFsmInfo->eCurrentState == P2P_DEV_STATE_OFF_CHNL_TX) &&
+	     (LINK_IS_EMPTY(&prP2pMgmtTxReqInfo->rP2pTxReqLink)))) {
+		p2pFuncTxMgmtFrame(prAdapter,
+				   prP2pDevFsmInfo->ucBssIndex,
+				   prMgmtTxMsg->prMgmtMsduInfo, prMgmtTxMsg->fgNoneCckRate);
+	} else {
+		P_P2P_OFF_CHNL_TX_REQ_INFO_T prOffChnlTxReq = (P_P2P_OFF_CHNL_TX_REQ_INFO_T) NULL;
+
+		prOffChnlTxReq = cnmMemAlloc(prAdapter, RAM_TYPE_MSG, sizeof(P2P_OFF_CHNL_TX_REQ_INFO_T));
+
+		if (prOffChnlTxReq == NULL) {
+			DBGLOG(P2P, ERROR, "Can not serve TX request due to MSG buffer not enough\n");
+			ASSERT(FALSE);
+			goto error;
 		}
 
-		DBGLOG(P2P, TRACE, " Device Interface\n");
-		DBGLOG(P2P, STATE, "p2pDevFsmRunEventMgmtTx\n");
+		prOffChnlTxReq->prMgmtTxMsdu = prMgmtTxMsg->prMgmtMsduInfo;
+		prOffChnlTxReq->fgNoneCckRate = prMgmtTxMsg->fgNoneCckRate;
+		kalMemCopy(&prOffChnlTxReq->rChannelInfo, &prMgmtTxMsg->rChannelInfo,
+			   sizeof(RF_CHANNEL_INFO_T));
+		prOffChnlTxReq->eChnlExt = prMgmtTxMsg->eChnlExt;
+		prOffChnlTxReq->fgIsWaitRsp = prMgmtTxMsg->fgIsWaitRsp;
 
-		prMgmtTxMsg->ucBssIdx = P2P_DEV_BSS_INDEX;
+		LINK_INSERT_TAIL(&prP2pMgmtTxReqInfo->rP2pTxReqLink, &prOffChnlTxReq->rLinkEntry);
 
-		prP2pDevFsmInfo = prAdapter->rWifiVar.prP2pDevFsmInfo;
+		/* Channel Request if needed. */
+		if (prP2pDevFsmInfo->eCurrentState != P2P_DEV_STATE_OFF_CHNL_TX) {
+			P_MSG_P2P_CHNL_REQUEST_T prP2pMsgChnlReq = (P_MSG_P2P_CHNL_REQUEST_T) NULL;
 
-		if (prP2pDevFsmInfo == NULL)
-			break;
+			prP2pMsgChnlReq = cnmMemAlloc(prAdapter, RAM_TYPE_MSG, sizeof(MSG_P2P_CHNL_REQUEST_T));
 
-		prP2pChnlReqInfo = &(prP2pDevFsmInfo->rChnlReqInfo);
-		prP2pMgmtTxReqInfo = &(prP2pDevFsmInfo->rMgmtTxInfo);
-
-		if ((!prMgmtTxMsg->fgIsOffChannel) ||
-		    ((prP2pDevFsmInfo->eCurrentState == P2P_DEV_STATE_OFF_CHNL_TX) &&
-		     (LINK_IS_EMPTY(&prP2pMgmtTxReqInfo->rP2pTxReqLink)))) {
-			p2pFuncTxMgmtFrame(prAdapter,
-					   prP2pDevFsmInfo->ucBssIndex,
-					   prMgmtTxMsg->prMgmtMsduInfo, prMgmtTxMsg->fgNoneCckRate);
-		} else {
-			P_P2P_OFF_CHNL_TX_REQ_INFO_T prOffChnlTxReq = (P_P2P_OFF_CHNL_TX_REQ_INFO_T) NULL;
-
-			prOffChnlTxReq = cnmMemAlloc(prAdapter, RAM_TYPE_MSG, sizeof(P2P_OFF_CHNL_TX_REQ_INFO_T));
-
-			if (prOffChnlTxReq == NULL) {
-				DBGLOG(P2P, ERROR, "Can not serve TX request due to MSG buffer not enough\n");
+			if (prP2pMsgChnlReq == NULL) {
+				cnmMemFree(prAdapter, prOffChnlTxReq);
 				ASSERT(FALSE);
-				break;
+				DBGLOG(P2P, ERROR, "Not enough MSG buffer for channel request\n");
+				goto error;
 			}
 
-			prOffChnlTxReq->prMgmtTxMsdu = prMgmtTxMsg->prMgmtMsduInfo;
-			prOffChnlTxReq->fgNoneCckRate = prMgmtTxMsg->fgNoneCckRate;
-			kalMemCopy(&prOffChnlTxReq->rChannelInfo, &prMgmtTxMsg->rChannelInfo,
-				   sizeof(RF_CHANNEL_INFO_T));
-			prOffChnlTxReq->eChnlExt = prMgmtTxMsg->eChnlExt;
-			prOffChnlTxReq->fgIsWaitRsp = prMgmtTxMsg->fgIsWaitRsp;
+			prP2pMsgChnlReq->eChnlReqType = CH_REQ_TYPE_OFFCHNL_TX;
 
-			LINK_INSERT_TAIL(&prP2pMgmtTxReqInfo->rP2pTxReqLink, &prOffChnlTxReq->rLinkEntry);
+			/* Not used in TX OFFCHNL REQ fields. */
+			prP2pMsgChnlReq->rMsgHdr.eMsgId = MID_MNY_P2P_CHNL_REQ;
+			prP2pMsgChnlReq->u8Cookie = 0;
+			prP2pMsgChnlReq->u4Duration = P2P_OFF_CHNL_TX_DEFAULT_TIME_MS;
 
-			/* Channel Request if needed. */
-			if (prP2pDevFsmInfo->eCurrentState != P2P_DEV_STATE_OFF_CHNL_TX) {
-				P_MSG_P2P_CHNL_REQUEST_T prP2pMsgChnlReq = (P_MSG_P2P_CHNL_REQUEST_T) NULL;
+			kalMemCopy(&prP2pMsgChnlReq->rChannelInfo,
+				   &prMgmtTxMsg->rChannelInfo, sizeof(RF_CHANNEL_INFO_T));
+			prP2pMsgChnlReq->eChnlSco = prMgmtTxMsg->eChnlExt;
 
-				prP2pMsgChnlReq = cnmMemAlloc(prAdapter, RAM_TYPE_MSG, sizeof(MSG_P2P_CHNL_REQUEST_T));
-
-				if (prP2pMsgChnlReq == NULL) {
-					cnmMemFree(prAdapter, prOffChnlTxReq);
-					ASSERT(FALSE);
-					DBGLOG(P2P, ERROR, "Not enough MSG buffer for channel request\n");
-					break;
-				}
-
-				prP2pMsgChnlReq->eChnlReqType = CH_REQ_TYPE_OFFCHNL_TX;
-
-				/* Not used in TX OFFCHNL REQ fields. */
-				prP2pMsgChnlReq->rMsgHdr.eMsgId = MID_MNY_P2P_CHNL_REQ;
-				prP2pMsgChnlReq->u8Cookie = 0;
-				prP2pMsgChnlReq->u4Duration = P2P_OFF_CHNL_TX_DEFAULT_TIME_MS;
-
-				kalMemCopy(&prP2pMsgChnlReq->rChannelInfo,
-					   &prMgmtTxMsg->rChannelInfo, sizeof(RF_CHANNEL_INFO_T));
-				prP2pMsgChnlReq->eChnlSco = prMgmtTxMsg->eChnlExt;
-
-				p2pDevFsmRunEventChannelRequest(prAdapter, (P_MSG_HDR_T) prP2pMsgChnlReq);
-			}
+			p2pDevFsmRunEventChannelRequest(prAdapter, (P_MSG_HDR_T) prP2pMsgChnlReq);
 		}
-	} while (FALSE);
+	}
 
-	if (prMsgHdr)
-		cnmMemFree(prAdapter, prMsgHdr);
+error:
+	cnmMemFree(prAdapter, prMsgHdr);
 }				/* p2pDevFsmRunEventMgmtTx */
 
 WLAN_STATUS
@@ -817,250 +835,6 @@ VOID p2pDevFsmRunEventMgmtFrameRegister(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T
 	if (prMsgHdr)
 		cnmMemFree(prAdapter, prMsgHdr);
 }				/* p2pDevFsmRunEventMgmtFrameRegister */
-
-/* /////////////////////////////////////////// */
-
-/*----------------------------------------------------------------------------*/
-/*!
- * \brief    This function is call when channel is granted by CNM module from FW.
- *
- * \param[in] prAdapter  Pointer of ADAPTER_T
- *
- * \return none
- */
-/*----------------------------------------------------------------------------*/
-VOID p2pFsmRunEventChGrant(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
-{
-	P_MSG_CH_GRANT_T prMsgChGrant = (P_MSG_CH_GRANT_T) NULL;
-	P_BSS_INFO_T prP2pBssInfo = (P_BSS_INFO_T) NULL;
-
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prMsgHdr != NULL));
-
-		prMsgChGrant = (P_MSG_CH_GRANT_T) prMsgHdr;
-
-		prP2pBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, prMsgChGrant->ucBssIndex);
-
-		DBGLOG(P2P, TRACE, "P2P Run Event Channel Grant\n");
-
-#if CFG_SUPPORT_DBDC
-		if (prP2pBssInfo->eDBDCBand == ENUM_BAND_AUTO)
-			prP2pBssInfo->eDBDCBand = prMsgChGrant->eDBDCBand;
-#endif
-
-#if CFG_SISO_SW_DEVELOP
-		/* Driver record granted CH in BSS info */
-		prP2pBssInfo->fgIsGranted = TRUE;
-		prP2pBssInfo->eBandGranted = prMsgChGrant->eRfBand;
-		prP2pBssInfo->ucPrimaryChannelGranted = prMsgChGrant->ucPrimaryChannel;
-#endif
-
-		switch (prP2pBssInfo->eCurrentOPMode) {
-		case OP_MODE_P2P_DEVICE:
-			ASSERT(prP2pBssInfo->ucBssIndex == P2P_DEV_BSS_INDEX);
-			p2pDevFsmRunEventChnlGrant(prAdapter, prMsgHdr, prAdapter->rWifiVar.prP2pDevFsmInfo);
-			break;
-		case OP_MODE_INFRASTRUCTURE:
-		case OP_MODE_ACCESS_POINT:
-			ASSERT(prP2pBssInfo->ucBssIndex < P2P_DEV_BSS_INDEX);
-			p2pRoleFsmRunEventChnlGrant(prAdapter, prMsgHdr,
-						    P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
-										   prP2pBssInfo->u4PrivateData));
-			break;
-		default:
-			ASSERT(FALSE);
-			break;
-		}
-	} while (FALSE);
-}				/* p2pFsmRunEventChGrant */
-
-VOID p2pFsmRunEventScanRequest(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
-{
-	P_MSG_P2P_SCAN_REQUEST_T prP2pScanReqMsg = (P_MSG_P2P_SCAN_REQUEST_T) NULL;
-
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prMsgHdr != NULL));
-
-		prP2pScanReqMsg = (P_MSG_P2P_SCAN_REQUEST_T) prMsgHdr;
-
-		if (prP2pScanReqMsg->ucBssIdx == P2P_DEV_BSS_INDEX)
-			p2pDevFsmRunEventScanRequest(prAdapter, prMsgHdr);
-		else
-			p2pRoleFsmRunEventScanRequest(prAdapter, prMsgHdr);
-	} while (FALSE);
-
-	if (prP2pScanReqMsg == NULL)
-		cnmMemFree(prAdapter, prMsgHdr);
-}				/* p2pDevFsmRunEventScanRequest */
-
-/*----------------------------------------------------------------------------*/
-/*!
- * \brief    This function is used to handle scan done event during Device Discovery.
- *
- * \param[in] prAdapter  Pointer of ADAPTER_T
- *
- * \return none
- */
-/*----------------------------------------------------------------------------*/
-VOID p2pFsmRunEventScanDone(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
-{
-	P_MSG_SCN_SCAN_DONE prScanDoneMsg = (P_MSG_SCN_SCAN_DONE) NULL;
-	P_BSS_INFO_T prP2pBssInfo = (P_BSS_INFO_T) NULL;
-
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prMsgHdr != NULL));
-
-		prScanDoneMsg = (P_MSG_SCN_SCAN_DONE) prMsgHdr;
-
-		prP2pBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, prScanDoneMsg->ucBssIndex);
-
-		if (prAdapter->fgIsP2PRegistered == FALSE) {
-			DBGLOG(P2P, TRACE, "P2P BSS Info is removed, break p2pFsmRunEventScanDone\n");
-
-			if (prMsgHdr)
-				cnmMemFree(prAdapter, prMsgHdr);
-			break;
-		}
-
-		DBGLOG(P2P, TRACE, "P2P Scan Done Event\n");
-
-		switch (prP2pBssInfo->eCurrentOPMode) {
-		case OP_MODE_P2P_DEVICE:
-			ASSERT(prP2pBssInfo->ucBssIndex == P2P_DEV_BSS_INDEX);
-			p2pDevFsmRunEventScanDone(prAdapter, prMsgHdr, prAdapter->rWifiVar.prP2pDevFsmInfo);
-			break;
-		case OP_MODE_INFRASTRUCTURE:
-		case OP_MODE_ACCESS_POINT:
-			ASSERT(prP2pBssInfo->ucBssIndex < P2P_DEV_BSS_INDEX);
-			p2pRoleFsmRunEventScanDone(prAdapter, prMsgHdr,
-						   P2P_ROLE_INDEX_2_ROLE_FSM_INFO(prAdapter,
-										  prP2pBssInfo->u4PrivateData));
-			break;
-		default:
-			ASSERT(FALSE);
-			break;
-		}
-	} while (FALSE);
-}				/* p2pFsmRunEventScanDone */
-
-VOID p2pFsmRunEventNetDeviceRegister(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
-{
-	P_MSG_P2P_NETDEV_REGISTER_T prNetDevRegisterMsg = (P_MSG_P2P_NETDEV_REGISTER_T) NULL;
-
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prMsgHdr != NULL));
-
-		DBGLOG(P2P, TRACE, "p2pFsmRunEventNetDeviceRegister\n");
-
-		prNetDevRegisterMsg = (P_MSG_P2P_NETDEV_REGISTER_T) prMsgHdr;
-
-		if (prNetDevRegisterMsg->fgIsEnable) {
-			p2pSetMode((prNetDevRegisterMsg->ucMode == 1) ? TRUE : FALSE);
-			if (p2pLaunch(prAdapter->prGlueInfo))
-				ASSERT(prAdapter->fgIsP2PRegistered);
-		} else {
-			if (prAdapter->fgIsP2PRegistered)
-				p2pRemove(prAdapter->prGlueInfo);
-		}
-	} while (FALSE);
-
-	if (prMsgHdr)
-		cnmMemFree(prAdapter, prMsgHdr);
-}				/* p2pFsmRunEventNetDeviceRegister */
-
-VOID p2pFsmRunEventUpdateMgmtFrame(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
-{
-	P_MSG_P2P_MGMT_FRAME_UPDATE_T prP2pMgmtFrameUpdateMsg = (P_MSG_P2P_MGMT_FRAME_UPDATE_T) NULL;
-
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prMsgHdr != NULL));
-
-		DBGLOG(P2P, TRACE, "p2pFsmRunEventUpdateMgmtFrame\n");
-
-		prP2pMgmtFrameUpdateMsg = (P_MSG_P2P_MGMT_FRAME_UPDATE_T) prMsgHdr;
-
-		switch (prP2pMgmtFrameUpdateMsg->eBufferType) {
-		case ENUM_FRAME_TYPE_EXTRA_IE_BEACON:
-			break;
-		case ENUM_FRAME_TYPE_EXTRA_IE_ASSOC_RSP:
-			break;
-		case ENUM_FRAME_TYPE_EXTRA_IE_PROBE_RSP:
-			break;
-		case ENUM_FRAME_TYPE_PROBE_RSP_TEMPLATE:
-			break;
-		case ENUM_FRAME_TYPE_BEACON_TEMPLATE:
-			break;
-		default:
-			break;
-		}
-	} while (FALSE);
-
-	if (prMsgHdr)
-		cnmMemFree(prAdapter, prMsgHdr);
-}				/* p2pFsmRunEventUpdateMgmtFrame */
-
-#if CFG_SUPPORT_WFD
-VOID p2pFsmRunEventWfdSettingUpdate(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
-{
-	P_WFD_CFG_SETTINGS_T prWfdCfgSettings = (P_WFD_CFG_SETTINGS_T) NULL;
-	P_MSG_WFD_CONFIG_SETTINGS_CHANGED_T prMsgWfdCfgSettings = (P_MSG_WFD_CONFIG_SETTINGS_CHANGED_T) NULL;
-	UINT_32 i;
-
-	/* WLAN_STATUS rStatus =  WLAN_STATUS_SUCCESS; */
-
-	DBGLOG(P2P, INFO, "p2pFsmRunEventWfdSettingUpdate\n");
-
-	do {
-		ASSERT_BREAK((prAdapter != NULL));
-
-		if (prMsgHdr != NULL) {
-			prMsgWfdCfgSettings = (P_MSG_WFD_CONFIG_SETTINGS_CHANGED_T) prMsgHdr;
-			prWfdCfgSettings = prMsgWfdCfgSettings->prWfdCfgSettings;
-		} else {
-			prWfdCfgSettings = &prAdapter->rWifiVar.rWfdConfigureSettings;
-		}
-
-		DBGLOG(P2P, INFO, "WFD Enalbe %x info %x state %x flag %x adv %x\n",
-		       prWfdCfgSettings->ucWfdEnable,
-		       prWfdCfgSettings->u2WfdDevInfo,
-		       (UINT_32) prWfdCfgSettings->u4WfdState,
-		       (UINT_32) prWfdCfgSettings->u4WfdFlag, (UINT_32) prWfdCfgSettings->u4WfdAdvancedFlag);
-
-		if (prWfdCfgSettings->ucWfdEnable == 0)
-			for (i = 0; i < KAL_P2P_NUM; i++) {
-				if (prAdapter->prGlueInfo->prP2PInfo[i])
-					prAdapter->prGlueInfo->prP2PInfo[i]->u2WFDIELen = 0;
-			}
-#if 0
-TODO:use chip config more easy rStatus = wlanSendSetQueryCmd(prAdapter,	/* prAdapter */
-									CMD_ID_SET_WFD_CTRL,	/* ucCID */
-									TRUE,	/* fgSetQuery */
-									FALSE,	/* fgNeedResp */
-									FALSE,	/* fgIsOid */
-									NULL, NULL,	/*
-											 *pfCmdTimeoutHandler
-											 **/
-									sizeof(WFD_CFG_SETTINGS_T), /* u4SetQueryInfoLen
-													 **/
-									(PUINT_8) prWfdCfgSettings,	/* pucInfoBuffer
-													 **/
-									NULL,	/*
-										 *pvSetQueryBuffer
-										 **/
-									0	/*
-										 *u4SetQueryBufferLen
-										 **/
-		    );
-#endif
-	} while (FALSE);
-
-	if (prMsgHdr)
-		cnmMemFree(prAdapter, prMsgHdr);
-}
-
-/* p2pFsmRunEventWfdSettingUpdate */
-
-#endif /* CFG_SUPPORT_WFD */
 
 VOID p2pDevFsmRunEventActiveDevBss(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr)
 {

@@ -75,12 +75,12 @@
 */
 
 ECO_INFO_T mt6632_eco_table[] = {
-	/* HW version,  ROM version,    Factory version */
-	{0x00, 0x00, 0xA},	/* E1 */
-	{0x00, 0x00, 0xA},	/* E2 */
-	{0x10, 0x10, 0xA},	/* E3 */
+	/* HW version,  ROM version,    Factory version, Eco version */
+	{0x00, 0x00, 0xA, 0x1},	/* E1 */
+	{0x00, 0x00, 0xA, 0x2},	/* E2 */
+	{0x10, 0x10, 0xA, 0x3},	/* E3 */
 
-	{0x00, 0x00, 0x0}	/* End of table */
+	{0x00, 0x00, 0x0, 0x0}	/* End of table */
 };
 
 /*******************************************************************************
@@ -96,6 +96,7 @@ struct mt66xx_chip_info mt66xx_chip_info_mt6632 = {
 	.patch_addr = MT6632_PATCH_START_ADDR,
 	.is_pcie_32dw_read = MT6632_IS_PCIE_32DW_READ, /* Litien */
 	.eco_info = mt6632_eco_table,
+	.features = 0,
 };
 
 struct mt66xx_hif_driver_data mt66xx_driver_data_mt6632 = {

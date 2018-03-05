@@ -172,8 +172,8 @@ struct _GL_P2P_INFO_T {
 	UINT_32 u4CipherPairwise;
 	/*UINT_8 ucWSCRunning;*//* TH3 multiple P2P */
 
-	UINT_8 aucWSCIE[3][400];	/* 0 for beacon, 1 for probe req, 2 for probe response */
-	UINT_16 u2WSCIELen[3];
+	UINT_8 aucWSCIE[4][400];	/* 0 for beacon, 1 for probe req, 2 for probe response, 3 for assoc response */
+	UINT_16 u2WSCIELen[4];
 
 #if CFG_SUPPORT_WFD
 	UINT_8 aucWFDIE[400];	/* 0 for beacon, 1 for probe req, 2 for probe response */
@@ -193,6 +193,11 @@ struct _GL_P2P_INFO_T {
 #if 1				/* CFG_SUPPORT_ANTI_PIRACY */
 	/*UINT_8 aucSecCheck[256];*//* TH3 multiple P2P */
 	/*UINT_8 aucSecCheckRsp[256];*//* TH3 multiple P2P */
+#endif
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	struct cfg80211_chan_def *chandef;
+	UINT_32 cac_time_ms;
 #endif
 
 #if CFG_SUPPORT_HOTSPOT_WPS_MANAGER

@@ -117,7 +117,7 @@ UINT_8 g_GetResultsCmdCnt;
 *                              F U N C T I O N S
 ********************************************************************************
 */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0)
+#if KERNEL_VERSION(3, 17, 0) <= CFG80211_VERSION_CODE
 
 int mtk_cfg80211_NLA_PUT(struct sk_buff *skb, int attrtype, int attrlen, const void *data)
 {
@@ -749,9 +749,9 @@ int mtk_cfg80211_vendor_get_channel_list(struct wiphy *wiphy, struct wireless_de
 		struct nlattr *attr;
 		UINT_32 band = 0;
 		UINT_8 ucNumOfChannel, i, j;
-		RF_CHANNEL_INFO_T aucChannelList[64];
+		RF_CHANNEL_INFO_T aucChannelList[MAX_CHN_NUM];
 		UINT_32 num_channels;
-		wifi_channel channels[64];
+		wifi_channel channels[MAX_CHN_NUM];
 		struct sk_buff *skb;
 
 		ASSERT(wiphy && wdev);
@@ -772,10 +772,10 @@ int mtk_cfg80211_vendor_get_channel_list(struct wiphy *wiphy, struct wireless_de
 
 		if (band == 0) { /* 2.4G band */
 			rlmDomainGetChnlList(prGlueInfo->prAdapter, BAND_2G4, TRUE,
-					 64, &ucNumOfChannel, aucChannelList);
+					 MAX_CHN_NUM, &ucNumOfChannel, aucChannelList);
 		} else { /* 5G band */
 			rlmDomainGetChnlList(prGlueInfo->prAdapter, BAND_5G, TRUE,
-					 64, &ucNumOfChannel, aucChannelList);
+					 MAX_CHN_NUM, &ucNumOfChannel, aucChannelList);
 		}
 
 		kalMemZero(channels, sizeof(channels));
@@ -835,10 +835,12 @@ int mtk_cfg80211_vendor_set_country_code(struct wiphy *wiphy, struct wireless_de
 	DBGLOG(REQ, INFO, "vendor command: data_len=%d\n", data_len);
 
 	attr = (struct nlattr *)data;
-	if (attr->nla_type == WIFI_ATTRIBUTE_COUNTRY_CODE) {
+
+	if (attr->nla_type != WIFI_ATTRIBUTE_COUNTRY_CODE)
+		return -EINVAL;
+
 		country[0] = *((PUINT_8)nla_data(attr));
 		country[1] = *((PUINT_8)nla_data(attr) + 1);
-	}
 
 	DBGLOG(REQ, INFO, "Set country code: %c%c\n", country[0], country[1]);
 

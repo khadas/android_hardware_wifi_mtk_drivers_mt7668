@@ -132,6 +132,15 @@
 #define RSN_AUTH_MFP_REQUIRED   2	/* MFP required */
 #endif
 
+
+#define GTK_REKEY_CMD_MODE_OFFLOAD_ON		0
+#define GTK_REKEY_CMD_MODE_OFLOAD_OFF		1
+#define GTK_REKEY_CMD_MODE_SET_BCMC_PN		2
+#define GTK_REKEY_CMD_MODE_GET_BCMC_PN		3
+#define GTK_REKEY_CMD_MODE_RPY_OFFLOAD_ON	4
+#define GTK_REKEY_CMD_MODE_RPY_OFFLOAD_OFF	5
+
+
 /*******************************************************************************
 *                             D A T A   T Y P E S
 ********************************************************************************
@@ -160,6 +169,7 @@
 #define WPA_IE(fp)              ((P_WPA_INFO_ELEM_T) fp)
 
 #define ELEM_MAX_LEN_ASSOC_RSP_WSC_IE          (32 - ELEM_HDR_LEN)
+#define ELEM_MAX_LEN_TIMEOUT_IE          (5)
 
 /*******************************************************************************
 *                  F U N C T I O N   D E C L A R A T I O N S
@@ -188,7 +198,8 @@ rsnParseCheckForWFAInfoElem(IN P_ADAPTER_T prAdapter,
 			    IN PUINT_8 pucBuf, OUT PUINT_8 pucOuiType, OUT PUINT_16 pu2SubTypeVersion);
 
 #if CFG_SUPPORT_AAA
-void rsnParserCheckForRSNCCMPPSK(P_ADAPTER_T prAdapter, P_RSN_INFO_ELEM_T prIe, PUINT_16 pu2StatusCode);
+void rsnParserCheckForRSNCCMPPSK(P_ADAPTER_T prAdapter, P_RSN_INFO_ELEM_T prIe, P_STA_RECORD_T prStaRec,
+	PUINT_16 pu2StatusCode);
 #endif
 
 VOID rsnTkipHandleMICFailure(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prSta, IN BOOLEAN fgErrorKeyType);
@@ -224,7 +235,16 @@ void rsnStopSaQuery(IN P_ADAPTER_T prAdapter);
 void rsnSaQueryRequest(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb);
 
 void rsnSaQueryAction(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb);
-#endif
+
+UINT_16 rsnPmfCapableValidation(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prBssInfo, IN P_STA_RECORD_T prStaRec);
+
+VOID rsnPmfGenerateTimeoutIE(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
+
+void rsnApStartSaQuery(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec);
+
+void rsnApSaQueryAction(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwRfb);
+
+#endif /* CFG_SUPPORT_802_11W */
 
 #if CFG_SUPPORT_AAA
 VOID rsnGenerateWSCIEForAssocRsp(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);

@@ -81,7 +81,7 @@
 #include "gl_ate_agent.h"
 #include "gl_hook_api.h"
 #include "gl_qa_agent.h"
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+#if KERNEL_VERSION(3, 8, 0) <= CFG80211_VERSION_CODE
 #include <uapi/linux/nl80211.h>
 #endif
 
@@ -172,6 +172,11 @@ ATE_PRIV_CMD rAtePrivCmdTable[] = {
 
 	{"WriteEfuse", WriteEfuse},
 	{"TxPower", SetTxTargetPower},
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	{"RDDReport", SetRddReport},
+	{"ByPassCac", SetByPassCac},
+	{"RadarDetectMode", SetRadarDetectMode},
+#endif
 
 	{NULL,}
 };
@@ -2010,6 +2015,147 @@ int SetTxTargetPower(struct net_device *prNetDev, UINT_8 *prInBuf)
 	return i4Status;
 }
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief  This routine is called to Set RDD Report
+*
+* \param[in] prNetDev		Pointer to the Net Device
+* \param[in] prInBuf		A pointer to the command string buffer
+* \param[out] None
+*
+* \retval 0				On success.
+* \retval -EINVAL			If invalid argument.
+*/
+/*----------------------------------------------------------------------------*/
+int SetRddReport(struct net_device *prNetDev, UINT_8 *prInBuf)
+{
+	INT_32 i4Status;
+	INT_32 rv;
+	int dbdcIdx;
+	UINT_8 ucDbdcIdx;
+
+	DBGLOG(REQ, INFO, "MT6632 : ATE_AGENT iwpriv Set RDD Report, buf: %s\n", prInBuf);
+
+	/* rv = sscanf(prInBuf, "%u", &addr);*/
+	rv = kstrtoint(prInBuf, 0, &dbdcIdx);
+
+	DBGLOG(REQ, INFO, "MT6632 : ATE_AGENT iwpriv Set RDD Report, prInBuf: %s\n", prInBuf);
+	DBGLOG(INIT, ERROR, "MT6632 : ATE_AGENT iwpriv Set RDD Report : Band %d\n", dbdcIdx);
+
+	if (p2pFuncGetDfsState() == DFS_STATE_INACTIVE || p2pFuncGetDfsState() == DFS_STATE_DETECTED) {
+		DBGLOG(REQ, ERROR, "RDD Report is not supported in this DFS state (inactive or deteted)\n");
+		return WLAN_STATUS_NOT_SUPPORTED;
+	}
+
+	if (dbdcIdx != 0 && dbdcIdx != 1) {
+		DBGLOG(REQ, ERROR, "RDD index is not \"0\" or \"1\", Invalid data\n");
+		return WLAN_STATUS_INVALID_DATA;
+	}
+
+	ucDbdcIdx = (UINT_8) dbdcIdx;
+
+	if (rv == 0)
+		i4Status = MT_ATESetRddReport(prNetDev, ucDbdcIdx);
+	else
+		return -EINVAL;
+
+	return i4Status;
+}
+
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief  This routine is called to Set By Pass CAC.
+*
+* \param[in] prNetDev		Pointer to the Net Device
+* \param[in] prInBuf		A pointer to the command string buffer
+* \param[out] None
+*
+* \retval 0				On success.
+* \retval -EINVAL			If invalid argument.
+*/
+/*----------------------------------------------------------------------------*/
+int SetByPassCac(struct net_device *prNetDev, UINT_8 *prInBuf)
+{
+	INT_32 i4Status;
+	INT_32 rv;
+	INT_32 i4ByPassCacTime;
+	UINT_32 u4ByPassCacTime;
+
+	DBGLOG(REQ, INFO, "MT6632 : ATE_AGENT iwpriv Set By Pass Cac, buf: %s\n", prInBuf);
+
+	rv = kstrtoint(prInBuf, 0, &i4ByPassCacTime);
+
+	DBGLOG(REQ, INFO, "MT6632 : ATE_AGENT iwpriv Set By Pass Cac, prInBuf: %s\n", prInBuf);
+	DBGLOG(INIT, ERROR, "MT6632 : ATE_AGENT iwpriv Set By Pass Cac : %dsec\n", i4ByPassCacTime);
+
+	if (i4ByPassCacTime < 0) {
+		DBGLOG(REQ, ERROR, "Cac time < 0, Invalid data\n");
+		return WLAN_STATUS_INVALID_DATA;
+	}
+
+	u4ByPassCacTime = (UINT_32) i4ByPassCacTime;
+
+	p2pFuncEnableManualCac();
+
+	if (rv == 0)
+		i4Status = p2pFuncSetDriverCacTime(u4ByPassCacTime);
+	else
+		return -EINVAL;
+
+	return i4Status;
+}
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief  This routine is called to Set Radar Detect Mode.
+*
+* \param[in] prNetDev		Pointer to the Net Device
+* \param[in] prInBuf		A pointer to the command string buffer
+* \param[out] None
+*
+* \retval 0				On success.
+* \retval -EINVAL			If invalid argument.
+*/
+/*----------------------------------------------------------------------------*/
+int SetRadarDetectMode(struct net_device *prNetDev, UINT_8 *prInBuf)
+{
+	INT_32 i4Status;
+	INT_32 rv;
+	int radarDetectMode;
+	UINT_8 ucRadarDetectMode;
+
+	DBGLOG(REQ, INFO, "MT6632 : ATE_AGENT iwpriv Set Radar Detect Mode, buf: %s\n", prInBuf);
+
+	rv = kstrtoint(prInBuf, 0, &radarDetectMode);
+
+	DBGLOG(REQ, INFO, "MT6632 : ATE_AGENT iwpriv Set Radar Detect Mode, prInBuf: %s\n", prInBuf);
+	DBGLOG(INIT, ERROR, "MT6632 : ATE_AGENT iwpriv Set Radar Detect Mode : %d\n", radarDetectMode);
+
+	if (p2pFuncGetDfsState() == DFS_STATE_INACTIVE || p2pFuncGetDfsState() == DFS_STATE_DETECTED) {
+		DBGLOG(REQ, ERROR, "RDD Report is not supported in this DFS state (inactive or deteted)\n");
+		return WLAN_STATUS_NOT_SUPPORTED;
+	}
+
+	if (radarDetectMode != 0 && radarDetectMode != 1) {
+		DBGLOG(REQ, ERROR, "Radar Detect Mode is not \"0\" or \"1\", Invalid data\n");
+		return WLAN_STATUS_INVALID_DATA;
+	}
+
+	ucRadarDetectMode = (UINT_8) radarDetectMode;
+
+	p2pFuncSetRadarDetectMode(ucRadarDetectMode);
+
+	if (rv == 0)
+		i4Status = MT_ATESetRadarDetectMode(prNetDev, ucRadarDetectMode);
+	else
+		return -EINVAL;
+
+	return i4Status;
+}
+
+#endif
 
 /*----------------------------------------------------------------------------*/
 /*!

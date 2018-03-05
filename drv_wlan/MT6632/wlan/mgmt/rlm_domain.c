@@ -215,20 +215,47 @@ mtk_regd_control g_mtk_regd_control = {
 
 #if (CFG_SUPPORT_SINGLE_SKU_LOCAL_DB == 1)
 const struct ieee80211_regdomain default_regdom_ww = {
-	.n_reg_rules = 5,
+	.n_reg_rules = 4,
+	.alpha2 = "99",
 	.reg_rules = {
-	/* channels 1..11 */
-	REG_RULE_LIGHT(2412-10, 2462+10, 40, 0),
-	/* channels 12,13 */
-	REG_RULE_LIGHT(2467-10, 2472+10, 20, (NL80211_RRF_PASSIVE_SCAN|NL80211_RRF_NO_IBSS)),
-	/* channel 14 */
-	REG_RULE_LIGHT(2484-10, 2484+10, 20, (NL80211_RRF_NO_OFDM|NL80211_RRF_PASSIVE_SCAN|NL80211_RRF_NO_IBSS)),
-	/* channel 36..42 */
-	REG_RULE_LIGHT(5480-10, 5240+10, 40, (NL80211_RRF_PASSIVE_SCAN|NL80211_RRF_NO_IBSS)),
-	/* channel 149..165 */
-	REG_RULE_LIGHT(5745-10, 5825+10, 40, (NL80211_RRF_PASSIVE_SCAN|NL80211_RRF_NO_IBSS))}
+	/* channels 1..13 */
+	REG_RULE_LIGHT(2412-10, 2472+10, 40, 0),
+	/* channels 14 */
+	REG_RULE_LIGHT(2484-10, 2484+10, 20, 0),
+	/* channel 36..64 */
+	REG_RULE_LIGHT(5150-10, 5350+10, 80, 0),
+	/* channel 100..165 */
+	REG_RULE_LIGHT(5470-10, 5850+10, 80, 0),
+	}
 };
 #endif
+
+const char *gTx_Pwr_Limit_Section[TX_PWR_LIMIT_SECTION_NUM] = {
+	"legacy", "ht20", "ht40", "vht20", "offset"
+};
+
+const u8 gTx_Pwr_Limit_Element_Num[TX_PWR_LIMIT_SECTION_NUM] = {
+	7, 6, 7, 7, 5
+};
+
+const char *gTx_Pwr_Limit_Element[TX_PWR_LIMIT_SECTION_NUM][TX_PWR_LIMIT_ELEMENT_NUM] = {
+	{"cck1_2", "cck_5_11", "ofdm6_9", "ofdm12_18", "ofdm24_36", "ofdm48", "ofdm54"},
+	{"mcs0_8", "mcs1_2_9_10", "mcs3_4_11_12", "mcs5_13", "mcs6_14", "mcs7_15"},
+	{"mcs0_8", "mcs1_2_9_10", "mcs3_4_11_12", "mcs5_13", "mcs6_14", "mcs7_15", "mcs32"},
+	{"mcs0", "mcs1_2", "mcs3_4", "mcs5_6", "mcs7", "mcs8", "mcs9"},
+	{"lg40", "lg80", "vht40", "vht80", "vht160nc"}
+};
+
+static const INT_8 gTx_Pwr_Limit_2g_Ch[] = {
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14};
+static const INT_8 gTx_Pwr_Limit_5g_Ch[] = {
+	36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 64, 100, 102,
+	104, 106, 108, 110, 112, 114, 116, 118, 120, 122, 124, 126, 128, 132,
+	134, 136, 138, 140, 142, 144, 149, 151, 153, 155, 157, 159, 161, 165};
+
+#define TX_PWR_LIMIT_2G_CH_NUM (ARRAY_SIZE(gTx_Pwr_Limit_2g_Ch))
+#define TX_PWR_LIMIT_5G_CH_NUM (ARRAY_SIZE(gTx_Pwr_Limit_5g_Ch))
+
 
 #endif
 
@@ -795,15 +822,15 @@ rlmDomainGetChnlList_V2(P_ADAPTER_T prAdapter,
 
 	if (eSpecificBand == BAND_2G4) {
 		i = 0;
-		max_count = rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ);
+		max_count = rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ);
 	} else if (eSpecificBand == BAND_5G) {
-		i = rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ);
-		max_count = rlmDomainGetActiveChannelCount(IEEE80211_BAND_5GHZ) +
-			rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ);
+		i = rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ);
+		max_count = rlmDomainGetActiveChannelCount(KAL_BAND_5GHZ) +
+			rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ);
 	} else {
 		i = 0;
-		max_count = rlmDomainGetActiveChannelCount(IEEE80211_BAND_5GHZ) +
-			rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ);
+		max_count = rlmDomainGetActiveChannelCount(KAL_BAND_5GHZ) +
+			rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ);
 	}
 
 	ucNum = 0;
@@ -812,7 +839,7 @@ rlmDomainGetChnlList_V2(P_ADAPTER_T prAdapter,
 		if (fgNoDfs && (prCh->flags & IEEE80211_CHAN_RADAR))
 			continue; /*not match*/
 
-		if (i < rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ))
+		if (i < rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ))
 			band = BAND_2G4;
 		else
 			band = BAND_5G;
@@ -906,7 +933,7 @@ VOID rlmDomainSendCmd(P_ADAPTER_T prAdapter, BOOLEAN fgIsOid)
 VOID rlmDomainSendDomainInfoCmd_V2(P_ADAPTER_T prAdapter, BOOLEAN fgIsOid)
 {
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
-	u8 max_channel_count;
+	u8 max_channel_count = 0;
 	u32 buff_max_size, buff_valid_size;
 	P_CMD_SET_DOMAIN_INFO_V2_T prCmd;
 	struct acctive_channel_list *prChs;
@@ -914,8 +941,10 @@ VOID rlmDomainSendDomainInfoCmd_V2(P_ADAPTER_T prAdapter, BOOLEAN fgIsOid)
 
 
 	pWiphy = priv_to_wiphy(prAdapter->prGlueInfo);
-	max_channel_count = pWiphy->bands[IEEE80211_BAND_2GHZ]->n_channels
-						+ pWiphy->bands[IEEE80211_BAND_5GHZ]->n_channels;
+	if (pWiphy->bands[KAL_BAND_2GHZ] != NULL)
+		max_channel_count += pWiphy->bands[KAL_BAND_2GHZ]->n_channels;
+	if (pWiphy->bands[KAL_BAND_5GHZ] != NULL)
+		max_channel_count += pWiphy->bands[KAL_BAND_5GHZ]->n_channels;
 
 	if (max_channel_count == 0) {
 		DBGLOG(RLM, ERROR, "%s, invalid channel count.\n", __func__);
@@ -1121,18 +1150,19 @@ VOID rlmDomainSendPassiveScanInfoCmd(P_ADAPTER_T prAdapter, BOOLEAN fgIsOid)
 BOOLEAN rlmDomainIsLegalChannel_V2(P_ADAPTER_T prAdapter, ENUM_BAND_T eBand, UINT_8 ucChannel)
 {
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
-	UINT_8 idx, toatl_count;
+	UINT_8 idx, start_idx, end_idx;
 	struct channel *prCh;
 
 	if (eBand == BAND_2G4) {
-		idx = 0;
-		toatl_count = rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ);
+		start_idx = 0;
+		end_idx = rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ);
 	} else {
-		idx = rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ);
-		toatl_count = rlmDomainGetActiveChannelCount(IEEE80211_BAND_5GHZ);
+		start_idx = rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ);
+		end_idx = rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ) +
+					rlmDomainGetActiveChannelCount(KAL_BAND_5GHZ);
 	}
 
-	for ( ; idx < toatl_count; idx++) {
+	for (idx = start_idx; idx < end_idx; idx++) {
 		prCh = rlmDomainGetActiveChannels() + idx;
 
 		if (prCh->chNum == ucChannel)
@@ -1413,10 +1443,486 @@ rlmDomainIsValidRfSetting(P_ADAPTER_T prAdapter,
 }
 
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
-void rlmSetTxPwrLmtCmdValue(struct tx_pwr_element *pEle, P_CMD_CHANNEL_POWER_LIMIT_V2 pCmd)
+
+/*
+ * This function coverts country code from alphabet chars to u32,
+ * the caller need to pass country code chars and do size check
+ */
+UINT_32 rlmDomainAlpha2ToU32(PCHAR pcAlpha2, UINT_8 ucAlpha2Size)
 {
-	memcpy(pCmd, pEle, sizeof(CMD_CHANNEL_POWER_LIMIT_V2));
-	pCmd->ucCentralCh = pEle->channel_num;
+	UINT_8 ucIdx;
+	UINT_32 u4CountryCode = 0;
+
+	if (ucAlpha2Size > TX_PWR_LIMIT_COUNTRY_STR_MAX_LEN) {
+		DBGLOG(RLM, ERROR, "alpha2 size %d is invalid!(max: %d)\n",
+			ucAlpha2Size, TX_PWR_LIMIT_COUNTRY_STR_MAX_LEN);
+		ucAlpha2Size = TX_PWR_LIMIT_COUNTRY_STR_MAX_LEN;
+	}
+
+	for (ucIdx = 0; ucIdx < ucAlpha2Size; ucIdx++)
+		u4CountryCode |= (pcAlpha2[ucIdx] << (ucIdx * 8));
+
+	return u4CountryCode;
+}
+
+/*----------------------------------------------------------------------------*/
+/*!
+* \brief Search the tx power limit setting range of the specified in the text file
+*
+* \param[IN] u4CountryCode The u32 type of the specified country.
+* \param[IN] pucBuf The content of the text file.
+* \param[IN] u4cBufLen End boundary of the text file.
+* \param[OUT] pu4CountryStart Store the start position of the desired country settings.
+* \param[OUT] pu4CountryEnd Store the end position of the desired country settings.
+*
+* \retval TRUE Success.
+* \retval FALSE Failure.
+*/
+/*----------------------------------------------------------------------------*/
+
+BOOL rlmDomainTxPwrLimitGetCountryRange(
+	UINT_32 u4CountryCode, PUINT_8 pucBuf, UINT_32 u4BufLen,
+	PUINT_32 pu4CountryStart, PUINT_32 pu4CountryEnd)
+{
+	UINT_32 u4TmpPos = 0;
+	char pcrCountryStr[TX_PWR_LIMIT_COUNTRY_STR_MAX_LEN + 1] = {0};
+	UINT_8 cIdx = 0;
+
+	while (1) {
+		while (u4TmpPos < u4BufLen && pucBuf[u4TmpPos] != '[')
+			u4TmpPos++;
+
+		u4TmpPos++; /* skip the '[' char */
+
+		cIdx = 0;
+		while (u4TmpPos < u4BufLen && cIdx < TX_PWR_LIMIT_COUNTRY_STR_MAX_LEN &&
+			pucBuf[u4TmpPos] != ']') {
+			pcrCountryStr[cIdx++] = pucBuf[u4TmpPos];
+			u4TmpPos++;
+		}
+
+		u4TmpPos++; /* skip the ']' char */
+
+		if (u4TmpPos >= u4BufLen || cIdx > TX_PWR_LIMIT_COUNTRY_STR_MAX_LEN)
+			return FALSE;
+
+		if (u4CountryCode == rlmDomainAlpha2ToU32(pcrCountryStr, cIdx)) {
+			DBGLOG(RLM, INFO, "Found TxPwrLimit table for CountryCode \"%s\"\n",
+				pcrCountryStr);
+			*pu4CountryStart = u4TmpPos; /* the location after char ']' */
+			break;
+		}
+	}
+
+	while (u4TmpPos < u4BufLen && pucBuf[u4TmpPos] != '[')
+		u4TmpPos++;
+
+	*pu4CountryEnd = u4TmpPos;
+
+	return TRUE;
+}
+
+BOOL rlmDomainTxPwrLimitSearchSection(const char *pSectionName,
+	PINT_8 pucBuf, PUINT_32 pu4Pos, UINT_32 u4BufEnd)
+{
+	UINT_32 u4TmpPos = *pu4Pos;
+	UINT_8 uSectionNameLen = kalStrLen(pSectionName);
+
+	while (1) {
+		while (u4TmpPos < u4BufEnd && pucBuf[u4TmpPos] != '<')
+			u4TmpPos++;
+
+		u4TmpPos++; /* skip char '<' */
+
+		if (u4TmpPos + uSectionNameLen >= u4BufEnd)
+			return FALSE;
+
+		if (kalStrnCmp(&pucBuf[u4TmpPos], pSectionName, uSectionNameLen) == 0) {
+
+			/* Go to the end of section header line */
+			while (u4TmpPos < u4BufEnd && pucBuf[u4TmpPos] != '\n')
+				u4TmpPos++;
+
+			*pu4Pos = u4TmpPos;
+
+			break;
+		}
+	}
+
+	return TRUE;
+}
+
+BOOL rlmDomainTxPwrLimitSectionEnd(PUINT_8 pucBuf,
+	const char *pSectionName, PUINT_32 pu4Pos, UINT_32 u4BufEnd)
+{
+	UINT_32 u4TmpPos = *pu4Pos;
+	char cTmpChar = 0;
+	UINT_8 uSectionNameLen = kalStrLen(pSectionName);
+
+	while (u4TmpPos < u4BufEnd) {
+		cTmpChar = pucBuf[u4TmpPos];
+
+		/* skip blank lines */
+		if (cTmpChar == ' ' || cTmpChar == '\t' ||
+			cTmpChar == '\n' || cTmpChar == '\r') {
+			u4TmpPos++;
+			continue;
+		}
+
+		break;
+	}
+
+	if (u4TmpPos + uSectionNameLen + 2 >= u4BufEnd) {/* 2 means '/' and '>' */
+		*pu4Pos = u4BufEnd;
+		return FALSE;
+	}
+
+	if (pucBuf[u4TmpPos] != '<')
+		return FALSE;
+
+	if (pucBuf[u4TmpPos + 1] != '/' ||
+		pucBuf[u4TmpPos + 2 + uSectionNameLen] != '>' ||
+		kalStrnCmp(&pucBuf[u4TmpPos + 2], pSectionName, uSectionNameLen)) {
+
+		*pu4Pos = u4TmpPos + uSectionNameLen + 2;
+		return FALSE;
+	}
+
+	*pu4Pos = u4TmpPos + uSectionNameLen + 3; /* 3 means go to the location after '>' */
+
+	return TRUE;
+}
+
+INT_8 rlmDomainTxPwrLimitGetChIdx(
+	struct TX_PWR_LIMIT_DATA *pTxPwrLimit, UINT_8 ucChannel)
+{
+	INT_8 cIdx = 0;
+
+	for (cIdx = 0; cIdx < pTxPwrLimit->ucChNum; cIdx++)
+		if (ucChannel == pTxPwrLimit->rChannelTxPwrLimit[cIdx].ucChannel)
+			return cIdx;
+
+	DBGLOG(RLM, ERROR, "Can't find idx of channel %d in TxPwrLimit data\n",
+		ucChannel);
+
+	return -1;
+}
+
+BOOL rlmDomainTxPwrLimitLoadChannelSetting(
+	PUINT_8 pucBuf, PUINT_32 pu4Pos, UINT_32 u4BufEnd,
+	struct TX_PWR_LIMIT_DATA *pTxPwrLimit, UINT_8 ucSectionIdx)
+{
+	UINT_32 u4TmpPos = *pu4Pos;
+	char cTmpChar = 0;
+	struct CHANNEL_TX_PWR_LIMIT *prChTxPwrLimit = NULL;
+	BOOL bNeg = FALSE;
+	INT_8 cLimitValue = 0, cChIdx = 0;
+	UINT_8 ucIdx = 0, ucChannel = 0;
+
+	/* skip blank lines */
+	while (u4TmpPos < u4BufEnd) {
+		cTmpChar = pucBuf[u4TmpPos];
+
+		if (cTmpChar == ' ' || cTmpChar == '\t' ||
+			cTmpChar == '\n' || cTmpChar == '\r') {
+			u4TmpPos++;
+			continue;
+		}
+
+		break;
+	}
+
+	/* current is at the location of 'c', check remaining buf length for 'chxxx' */
+	if (u4TmpPos + 5 >= u4BufEnd) {
+		DBGLOG(RLM, ERROR,
+			"Invalid location of ch setting: %u/%u\n",
+			u4TmpPos, u4BufEnd);
+		return FALSE;
+	}
+
+	if (pucBuf[u4TmpPos] == 'c' && pucBuf[u4TmpPos + 1] == 'h') {
+		ucChannel = (pucBuf[u4TmpPos + 2] - '0') * 100 +
+					(pucBuf[u4TmpPos + 3] - '0') * 10 +
+					(pucBuf[u4TmpPos + 4] - '0');
+	} else { /* invalid format */
+		*pu4Pos = u4TmpPos;
+		DBGLOG(RLM, ERROR, "Invalid ch setting starting chars: %c%c\n",
+			pucBuf[u4TmpPos], pucBuf[u4TmpPos + 1]);
+
+		/* goto next line */
+		while (*pu4Pos < u4BufEnd && pucBuf[*pu4Pos] != '\n')
+			(*pu4Pos)++;
+
+		return TRUE;
+	}
+
+	cChIdx = rlmDomainTxPwrLimitGetChIdx(pTxPwrLimit, ucChannel);
+
+	if (cChIdx == -1) {
+		*pu4Pos = u4TmpPos;
+		DBGLOG(RLM, ERROR, "Invalid ch %u %c%c%c\n", ucChannel,
+			pucBuf[u4TmpPos + 2], pucBuf[u4TmpPos + 3], pucBuf[u4TmpPos + 4]);
+
+		/* goto next line */
+		while (*pu4Pos < u4BufEnd && pucBuf[*pu4Pos] != '\n')
+			(*pu4Pos)++;
+
+		return TRUE;
+	}
+
+	u4TmpPos += 5;
+
+	prChTxPwrLimit = &pTxPwrLimit->rChannelTxPwrLimit[cChIdx];
+
+	/* read the channel TxPwrLimit settings */
+	for (ucIdx = 0; ucIdx < gTx_Pwr_Limit_Element_Num[ucSectionIdx]; ucIdx++) {
+
+		/* skip blank and comma */
+		while (u4TmpPos < u4BufEnd) {
+			cTmpChar = pucBuf[u4TmpPos];
+
+			if (cTmpChar == ' ' || cTmpChar == '\t' || cTmpChar == ',') {
+				u4TmpPos++;
+				continue;
+			}
+			break;
+		}
+
+		if (u4TmpPos >= u4BufEnd) {
+			*pu4Pos = u4BufEnd;
+			DBGLOG(RLM, ERROR,
+				"Invalid location of ch tx pwr limit val: %u/%u\n",
+				u4TmpPos, u4BufEnd);
+			return FALSE;
+		}
+
+		bNeg = FALSE;
+
+		cTmpChar = pucBuf[u4TmpPos];
+
+		if (cTmpChar == '-') {
+			bNeg = TRUE;
+			u4TmpPos++;
+		} else if (cTmpChar == 'x') {
+			prChTxPwrLimit->rTxPwrLimitValue[ucSectionIdx][ucIdx] =
+				TX_PWR_LIMIT_MAX_VAL;
+			u4TmpPos++;
+			continue;
+		}
+
+		cLimitValue = 0;
+		while (u4TmpPos < u4BufEnd) {
+			cTmpChar = pucBuf[u4TmpPos];
+
+			if (cTmpChar < '0' || cTmpChar > '9')
+				break;
+
+			cLimitValue = (cLimitValue * 10) + (cTmpChar - '0');
+			u4TmpPos++;
+		}
+
+		if (bNeg)
+			cLimitValue = -cLimitValue;
+
+		prChTxPwrLimit->rTxPwrLimitValue[ucSectionIdx][ucIdx] = cLimitValue;
+	}
+
+	*pu4Pos = u4TmpPos;
+	return TRUE;
+}
+
+VOID rlmDomainTxPwrLimitRemoveComments(
+	PUINT_8 pucBuf, UINT_32 u4BufLen)
+{
+	UINT_32 u4TmpPos = 0;
+	char cTmpChar = 0;
+
+	while (u4TmpPos < u4BufLen) {
+		cTmpChar = pucBuf[u4TmpPos];
+
+		if (cTmpChar == '#') {
+			while (cTmpChar != '\n') {
+				pucBuf[u4TmpPos] = ' ';
+
+				u4TmpPos++;
+				if (u4TmpPos >= u4BufLen)
+					break;
+
+				cTmpChar = pucBuf[u4TmpPos];
+			}
+		}
+		u4TmpPos++;
+	}
+}
+
+BOOL rlmDomainTxPwrLimitLoad(
+	P_ADAPTER_T prAdapter, PUINT_8 pucBuf, UINT_32 u4BufLen,
+	UINT_32 u4CountryCode, struct TX_PWR_LIMIT_DATA *pTxPwrLimit)
+{
+	UINT_8 uSecIdx = 0;
+	UINT_32 u4CountryStart = 0, u4CountryEnd = 0, u4Pos = 0;
+
+	rlmDomainTxPwrLimitRemoveComments(pucBuf, u4BufLen);
+
+	if (!rlmDomainTxPwrLimitGetCountryRange(u4CountryCode, pucBuf,
+		u4BufLen, &u4CountryStart, &u4CountryEnd)) {
+		DBGLOG(RLM, ERROR, "Can't find specified table in %s\n",
+			WLAN_TX_PWR_LIMIT_FILE_NAME);
+		return FALSE;
+	}
+
+	u4Pos = u4CountryStart;
+
+	for (uSecIdx = 0; uSecIdx < TX_PWR_LIMIT_SECTION_NUM; uSecIdx++) {
+		if (!rlmDomainTxPwrLimitSearchSection(gTx_Pwr_Limit_Section[uSecIdx],
+			pucBuf, &u4Pos, u4CountryEnd)) {
+			DBGLOG(RLM, ERROR, "Can't find specified section %s in %s\n",
+				gTx_Pwr_Limit_Section[uSecIdx], WLAN_TX_PWR_LIMIT_FILE_NAME);
+			return FALSE;
+		}
+
+		DBGLOG(RLM, INFO, "Find specified section %s in %s\n",
+			gTx_Pwr_Limit_Section[uSecIdx], WLAN_TX_PWR_LIMIT_FILE_NAME);
+
+		while (!rlmDomainTxPwrLimitSectionEnd(pucBuf,
+			gTx_Pwr_Limit_Section[uSecIdx], &u4Pos, u4CountryEnd) &&
+			u4Pos < u4CountryEnd) {
+			if (!rlmDomainTxPwrLimitLoadChannelSetting(pucBuf, &u4Pos,
+				u4CountryEnd, pTxPwrLimit, uSecIdx))
+				return FALSE;
+		}
+	}
+
+	DBGLOG(RLM, INFO, "Load %s finished\n", WLAN_TX_PWR_LIMIT_FILE_NAME);
+	return TRUE;
+}
+
+VOID rlmDomainTxPwrLimitSetChValues(
+	P_CMD_CHANNEL_POWER_LIMIT_V2 pCmd, struct CHANNEL_TX_PWR_LIMIT *pChTxPwrLimit)
+{
+	UINT_8 section = 0, e = 0;
+
+	pCmd->tx_pwr_dsss_cck = pChTxPwrLimit->rTxPwrLimitValue[0][0];
+	pCmd->tx_pwr_dsss_bpsk = pChTxPwrLimit->rTxPwrLimitValue[0][1];
+
+	pCmd->tx_pwr_ofdm_bpsk = pChTxPwrLimit->rTxPwrLimitValue[0][2]; /* 6M, 9M */
+	pCmd->tx_pwr_ofdm_qpsk = pChTxPwrLimit->rTxPwrLimitValue[0][3]; /* 12M, 18M */
+	pCmd->tx_pwr_ofdm_16qam = pChTxPwrLimit->rTxPwrLimitValue[0][4]; /* 24M, 36M */
+	pCmd->tx_pwr_ofdm_48m = pChTxPwrLimit->rTxPwrLimitValue[0][5];
+	pCmd->tx_pwr_ofdm_54m = pChTxPwrLimit->rTxPwrLimitValue[0][6];
+
+	pCmd->tx_pwr_ht20_bpsk = pChTxPwrLimit->rTxPwrLimitValue[1][0]; /* MCS0*/
+	pCmd->tx_pwr_ht20_qpsk = pChTxPwrLimit->rTxPwrLimitValue[1][1]; /* MCS1, MCS2*/
+	pCmd->tx_pwr_ht20_16qam = pChTxPwrLimit->rTxPwrLimitValue[1][2]; /* MCS3, MCS4*/
+	pCmd->tx_pwr_ht20_mcs5 = pChTxPwrLimit->rTxPwrLimitValue[1][3]; /* MCS5*/
+	pCmd->tx_pwr_ht20_mcs6 = pChTxPwrLimit->rTxPwrLimitValue[1][4]; /* MCS6*/
+	pCmd->tx_pwr_ht20_mcs7 = pChTxPwrLimit->rTxPwrLimitValue[1][5]; /* MCS7*/
+
+	pCmd->tx_pwr_ht40_bpsk = pChTxPwrLimit->rTxPwrLimitValue[2][0]; /* MCS0*/
+	pCmd->tx_pwr_ht40_qpsk = pChTxPwrLimit->rTxPwrLimitValue[2][1]; /* MCS1, MCS2*/
+	pCmd->tx_pwr_ht40_16qam = pChTxPwrLimit->rTxPwrLimitValue[2][2]; /* MCS3, MCS4*/
+	pCmd->tx_pwr_ht40_mcs5 = pChTxPwrLimit->rTxPwrLimitValue[2][3]; /* MCS5*/
+	pCmd->tx_pwr_ht40_mcs6 = pChTxPwrLimit->rTxPwrLimitValue[2][4]; /* MCS6*/
+	pCmd->tx_pwr_ht40_mcs7 = pChTxPwrLimit->rTxPwrLimitValue[2][5]; /* MCS7*/
+	pCmd->tx_pwr_ht40_mcs32 = pChTxPwrLimit->rTxPwrLimitValue[2][6]; /* MCS32*/
+
+	pCmd->tx_pwr_vht20_bpsk = pChTxPwrLimit->rTxPwrLimitValue[3][0]; /* MCS0*/
+	pCmd->tx_pwr_vht20_qpsk = pChTxPwrLimit->rTxPwrLimitValue[3][1]; /* MCS1, MCS2*/
+	pCmd->tx_pwr_vht20_16qam = pChTxPwrLimit->rTxPwrLimitValue[3][2]; /* MCS3, MCS4*/
+	pCmd->tx_pwr_vht20_64qam = pChTxPwrLimit->rTxPwrLimitValue[3][3]; /* MCS5, MCS6*/
+	pCmd->tx_pwr_vht20_mcs7 = pChTxPwrLimit->rTxPwrLimitValue[3][4];
+	pCmd->tx_pwr_vht20_mcs8 = pChTxPwrLimit->rTxPwrLimitValue[3][5];
+	pCmd->tx_pwr_vht20_mcs9 = pChTxPwrLimit->rTxPwrLimitValue[3][6];
+
+	pCmd->tx_pwr_vht_40 = pChTxPwrLimit->rTxPwrLimitValue[4][2];
+	pCmd->tx_pwr_vht_80 = pChTxPwrLimit->rTxPwrLimitValue[4][3];
+	pCmd->tx_pwr_vht_160c = pChTxPwrLimit->rTxPwrLimitValue[4][5];
+	pCmd->tx_pwr_vht_160nc = pChTxPwrLimit->rTxPwrLimitValue[4][4];
+	pCmd->tx_pwr_lg_40 = pChTxPwrLimit->rTxPwrLimitValue[4][0];
+	pCmd->tx_pwr_lg_80 = pChTxPwrLimit->rTxPwrLimitValue[4][1];
+
+
+	DBGLOG(RLM, TRACE, "ch %d\n", pCmd->ucCentralCh);
+	for (section = 0; section < TX_PWR_LIMIT_SECTION_NUM; section++)
+		for (e = 0; e < gTx_Pwr_Limit_Element_Num[section]; e++)
+			DBGLOG(RLM, TRACE, "TxPwrLimit[%s][%s]= %d\n",
+				gTx_Pwr_Limit_Section[section],
+				gTx_Pwr_Limit_Element[section][e],
+				pChTxPwrLimit->rTxPwrLimitValue[section][e]);
+}
+
+VOID rlmDomainTxPwrLimitSetValues(
+	P_CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T pSetCmd,
+	struct TX_PWR_LIMIT_DATA *pTxPwrLimit)
+{
+	UINT_8 ucIdx = 0;
+	INT_8 cChIdx = 0;
+	P_CMD_CHANNEL_POWER_LIMIT_V2 pCmd = NULL;
+	struct CHANNEL_TX_PWR_LIMIT *pChTxPwrLimit = NULL;
+
+	if (!pSetCmd || !pTxPwrLimit) {
+		DBGLOG(RLM, ERROR, "%s: Invalid request!!!\n", __func__);
+		return;
+	}
+
+	for (ucIdx = 0; ucIdx < pSetCmd->ucNum; ucIdx++) {
+		pCmd = &(pSetCmd->rChannelPowerLimit[ucIdx]);
+		cChIdx = rlmDomainTxPwrLimitGetChIdx(pTxPwrLimit, pCmd->ucCentralCh);
+		if (cChIdx == -1) {
+			DBGLOG(RLM, ERROR, "Invalid ch idx found while assigning values\n");
+			continue;
+		}
+		pChTxPwrLimit = &pTxPwrLimit->rChannelTxPwrLimit[cChIdx];
+		rlmDomainTxPwrLimitSetChValues(pCmd, pChTxPwrLimit);
+	}
+}
+
+BOOL rlmDomainTxPwrLimitLoadFromFile(P_ADAPTER_T prAdapter,
+	UINT_32 u4CountryCode, struct TX_PWR_LIMIT_DATA *pTxPwrLimit)
+{
+	PUINT_8 pucConfigBuf;
+	UINT_32 u4ConfigReadLen;
+	BOOL bRet = TRUE;
+
+	pucConfigBuf = (PUINT_8) kalMemAlloc(WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE, VIR_MEM_TYPE);
+
+	if (!pucConfigBuf)
+		return FALSE;
+
+	kalMemZero(pucConfigBuf, WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE);
+	u4ConfigReadLen = 0;
+
+	if (wlanGetFileContent(prAdapter, WLAN_TX_PWR_LIMIT_FILE_NAME, pucConfigBuf,
+				 WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE, &u4ConfigReadLen, TRUE) == 0) {
+		/* ToDo:: Nothing */
+	} else if (wlanGetFileContent(prAdapter, "/storage/sdcard0/" WLAN_TX_PWR_LIMIT_FILE_NAME, pucConfigBuf,
+				 WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE, &u4ConfigReadLen, FALSE) == 0) {
+		/* ToDo:: Nothing */
+	} else if (wlanGetFileContent(prAdapter, "/data/misc/" WLAN_TX_PWR_LIMIT_FILE_NAME, pucConfigBuf,
+				 WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE, &u4ConfigReadLen, FALSE) == 0) {
+		/* ToDo:: Nothing */
+	} else if (wlanGetFileContent(prAdapter, "/data/misc/wifi/" WLAN_TX_PWR_LIMIT_FILE_NAME, pucConfigBuf,
+				 WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE, &u4ConfigReadLen, FALSE) == 0) {
+		/* ToDo:: Nothing */
+	} else {
+		bRet = FALSE;
+		goto error;
+	}
+
+	if (pucConfigBuf[0] == '\0' || u4ConfigReadLen == 0) {
+		bRet = FALSE;
+		goto error;
+	}
+
+	if (!rlmDomainTxPwrLimitLoad(prAdapter, pucConfigBuf, u4ConfigReadLen,
+		u4CountryCode, pTxPwrLimit)) {
+		bRet = FALSE;
+		goto error;
+	}
+
+error:
+	kalMemFree(pucConfigBuf, VIR_MEM_TYPE, WLAN_TX_PWR_LIMIT_FILE_BUF_SIZE);
+	return bRet;
 }
 
 BOOLEAN rlmDomainGetTxPwrLimit(u32 country_code,
@@ -1425,88 +1931,63 @@ BOOLEAN rlmDomainGetTxPwrLimit(u32 country_code,
 							  P_CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T pSetCmd_5g
 							  )
 {
-	int ret;
-	u32 start_offset, ch_idx;
-	const struct firmware *file;
-	struct tx_pwr_element *pEle;
-	P_CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T pSetCmd;
-	P_CMD_CHANNEL_POWER_LIMIT_V2 pCmd;
-	BOOLEAN error = FALSE;
+	int bRet = TRUE;
+	UINT_8 ucIdx = 0, ucCnt = 0;
+	struct TX_PWR_LIMIT_DATA *pTxPwrLimit =
+		(struct TX_PWR_LIMIT_DATA *) kalMemAlloc(sizeof(struct TX_PWR_LIMIT_DATA), VIR_MEM_TYPE);
 
-	#define IS_5GHZ_CH(n) ((n) > 14)
-	#define TX_PWR_LIMIT_FILE "MT_TxPwrLimit.dat"
-
-
-	/*open file*/
-
-	/*
-	 * Driver support request_firmware() to get files
-	 * Android path: "/etc/firmware", "/vendor/firmware", "/firmware/image"
-	 * Linux path: "/lib/firmware", "/lib/firmware/update"
-	 */
-	ret = request_firmware(&file, TX_PWR_LIMIT_FILE, prGlueInfo->prDev);
-
-	if (ret) {
-		DBGLOG(RLM, ERROR, "%s(); Open file [%s] failed\n",
-			   __func__, TX_PWR_LIMIT_FILE);
-
-		/*error*/
-		return TRUE;
+	if (!pTxPwrLimit) {
+		bRet = FALSE;
+		DBGLOG(RLM, ERROR, "Alloc buffer for TxPwrLimit main struct failed\n");
+		return bRet;
 	}
 
-	DBGLOG(RLM, INFO, "%s(); country_code = 0x%x\n",
-		   __func__, country_code);
+	pTxPwrLimit->ucChNum = (pSetCmd_2g ? pSetCmd_2g->ucNum : 0) + (pSetCmd_5g ? pSetCmd_5g->ucNum : 0);
 
-	/*search country code*/
-	start_offset = rlmDomainSearchCountrySection(country_code, file);
-	if (!start_offset) {
-		DBGLOG(RLM, ERROR, "%s(); Cannot find match country code: %s\n",
-			   __func__, country_code);
+	pTxPwrLimit->rChannelTxPwrLimit =
+		(struct CHANNEL_TX_PWR_LIMIT *) kalMemAlloc(sizeof(struct CHANNEL_TX_PWR_LIMIT) *
+			(pTxPwrLimit->ucChNum), VIR_MEM_TYPE);
 
-		error = TRUE;
-		goto END;
+	if (!pTxPwrLimit->rChannelTxPwrLimit) {
+		bRet = FALSE;
+		DBGLOG(RLM, ERROR, "Alloc buffer for TxPwrLimit ch values failed\n");
+		goto error;
 	}
 
-	while (!rlmDomainIsTheEndOfCountrySection(start_offset, file)) {
+	kalMemSet(pTxPwrLimit->rChannelTxPwrLimit, MAX_TX_POWER,
+		sizeof(struct CHANNEL_TX_PWR_LIMIT) * (pTxPwrLimit->ucChNum));
 
-		/*getting and assign tx power*/
-		pEle = (struct tx_pwr_element *)(file->data + start_offset); /*pointer to data base*/
-
-		if (pEle->prefix == ELEMENT_PREFIX) {
-			/*search the home of this channel and update the tx pwr*/
-			if (IS_5GHZ_CH(pEle->channel_num))
-				pSetCmd = pSetCmd_5g;
-			else
-				pSetCmd = pSetCmd_2g;
-
-			if (!pSetCmd)
-				continue;
-
-
-			for (ch_idx = 0; ch_idx < pSetCmd->ucNum; ch_idx++) {
-				pCmd = &(pSetCmd->rChannelPowerLimit[ch_idx]);
-
-				if (pCmd->ucCentralCh == pEle->channel_num) {
-					rlmSetTxPwrLmtCmdValue(pEle, pCmd);
-
-					break;
-				}
-			}
-
-			if (ch_idx == pSetCmd->ucNum) {
-				DBGLOG(RLM, WARN, "%s(); The channel 0x%x is not active.\n",
-					   __func__, pEle->channel_num);
-			}
+	if (pSetCmd_2g)
+		for (ucIdx = 0; ucIdx < pSetCmd_2g->ucNum; ucIdx++) {
+			pTxPwrLimit->rChannelTxPwrLimit[ucCnt].ucChannel =
+				pSetCmd_2g->rChannelPowerLimit[ucIdx].ucCentralCh;
+			ucCnt++;
 		}
-		start_offset += sizeof(struct tx_pwr_element);
+
+	if (pSetCmd_5g)
+		for (ucIdx = 0; ucIdx < pSetCmd_5g->ucNum; ucIdx++) {
+			pTxPwrLimit->rChannelTxPwrLimit[ucCnt].ucChannel =
+				pSetCmd_5g->rChannelPowerLimit[ucIdx].ucCentralCh;
+			ucCnt++;
+		}
+
+	bRet = rlmDomainTxPwrLimitLoadFromFile(prGlueInfo->prAdapter,
+		country_code, pTxPwrLimit);
+
+	if (bRet) {
+		rlmDomainTxPwrLimitSetValues(pSetCmd_2g, pTxPwrLimit);
+		rlmDomainTxPwrLimitSetValues(pSetCmd_5g, pTxPwrLimit);
 	}
 
-END:
-	/*close file*/
-	release_firmware(file);
+	kalMemFree(pTxPwrLimit->rChannelTxPwrLimit, VIR_MEM_TYPE,
+		sizeof(CHANNEL_TX_PWR_LIMIT) * pTxPwrLimit->ucChNum);
 
-	return error;
+error:
+	kalMemFree(pTxPwrLimit, VIR_MEM_TYPE, sizeof(TX_PWR_LIMIT_DATA));
+
+	return bRet;
 }
+
 #endif
 
 #if CFG_SUPPORT_PWR_LIMIT_COUNTRY
@@ -1566,7 +2047,7 @@ VOID rlmDomainCheckCountryPowerLimitTable(P_ADAPTER_T prAdapter)
 
 		/*Repetition Entry Check */
 		for (j = i + 1;
-		     j <= sizeof(g_rRlmPowerLimitConfiguration) / sizeof(COUNTRY_POWER_LIMIT_TABLE_CONFIGURATION);
+		     j < ARRAY_SIZE(g_rRlmPowerLimitConfiguration);
 		     j++) {
 
 			WLAN_GET_FIELD_BE16(&g_rRlmPowerLimitConfiguration[j].aucCountryCode[0], &u2CountryCodeCheck);
@@ -1921,28 +2402,29 @@ VOID rlmDomainBuildCmdByConfigTable(P_ADAPTER_T prAdapter, P_CMD_SET_COUNTRY_CHA
 VOID rlmDomainSendPwrLimitCmd_V2(P_ADAPTER_T prAdapter)
 {
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
-	UINT_8 i;
 	WLAN_STATUS rStatus;
 	UINT_32 u4SetQueryInfoLen;
-	UINT32 ch_cnt;
+	UINT_32 ch_cnt;
 	struct wiphy *wiphy;
 	u8 band_idx, ch_idx;
-	P_CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T prCmd[IEEE80211_NUM_BANDS] = {NULL};
-	UINT_32 u4SetCmdTableMaxSize[IEEE80211_NUM_BANDS] = {0};
+	P_CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T prCmd[KAL_NUM_BANDS] = {NULL};
+	UINT_32 u4SetCmdTableMaxSize[KAL_NUM_BANDS] = {0};
+	const INT_8 *prChannelList = NULL;
 
 
 	DBGLOG(RLM, INFO, "rlmDomainSendPwrLimitCmd()\n");
 
 	wiphy = priv_to_wiphy(prAdapter->prGlueInfo);
-	for (band_idx = 0; band_idx < IEEE80211_NUM_BANDS; band_idx++) {
-		struct ieee80211_supported_band *sband;
-		struct ieee80211_channel *chan;
-
-		sband = wiphy->bands[band_idx];
-		if (!sband)
+	for (band_idx = 0; band_idx < KAL_NUM_BANDS; band_idx++) {
+		if (band_idx != KAL_BAND_2GHZ && band_idx != KAL_BAND_5GHZ)
 			continue;
 
-		ch_cnt = rlmDomainGetActiveChannelCount(band_idx);
+		prChannelList = (band_idx == KAL_BAND_2GHZ) ?
+			gTx_Pwr_Limit_2g_Ch : gTx_Pwr_Limit_5g_Ch;
+
+		ch_cnt = (band_idx == KAL_BAND_2GHZ) ? TX_PWR_LIMIT_2G_CH_NUM :
+			TX_PWR_LIMIT_5G_CH_NUM;
+
 		if (!ch_cnt)
 			continue;
 
@@ -1950,33 +2432,39 @@ VOID rlmDomainSendPwrLimitCmd_V2(P_ADAPTER_T prAdapter)
 			sizeof(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T) +
 			ch_cnt * sizeof(CMD_CHANNEL_POWER_LIMIT_V2);
 
+		/* compile time assertion on firmware command structs */
+		DATA_STRUCT_INSPECTING_ASSERT(sizeof(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T) == 8);
+		DATA_STRUCT_INSPECTING_ASSERT(sizeof(CMD_CHANNEL_POWER_LIMIT_V2) == 40);
+		DATA_STRUCT_INSPECTING_ASSERT(
+			OFFSET_OF(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T, rChannelPowerLimit) ==
+			sizeof(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T));
+		DATA_STRUCT_INSPECTING_ASSERT(
+			OFFSET_OF(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T, rChannelPowerLimit[1]) ==
+			sizeof(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T) + 1 * sizeof(CMD_CHANNEL_POWER_LIMIT_V2));
+		DATA_STRUCT_INSPECTING_ASSERT(
+			OFFSET_OF(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T, rChannelPowerLimit[2]) ==
+			sizeof(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T) + 2 * sizeof(CMD_CHANNEL_POWER_LIMIT_V2));
+
 		prCmd[band_idx] = cnmMemAlloc(prAdapter, RAM_TYPE_BUF, u4SetCmdTableMaxSize[band_idx]);
+
 
 		if (!prCmd[band_idx]) {
 			DBGLOG(RLM, ERROR, "Domain: no buf to send cmd\n");
-			return;
+			goto error;
 		}
 
 		/*initialize tw pwr table*/
 		kalMemSet(prCmd[band_idx], MAX_TX_POWER, u4SetCmdTableMaxSize[band_idx]);
 
 		prCmd[band_idx]->ucNum = ch_cnt;
-		prCmd[band_idx]->eband = (band_idx == IEEE80211_BAND_2GHZ) ? BAND_2G4 : BAND_5G;
+		prCmd[band_idx]->eband = (band_idx == KAL_BAND_2GHZ) ? BAND_2G4 : BAND_5G;
 		prCmd[band_idx]->countryCode = rlmDomainGetCountryCode();
 
 		DBGLOG(RLM, INFO, "%s, active n_channels=%d, band=%d\n", __func__, ch_cnt, prCmd[band_idx]->eband);
 
-		i = 0;
-		for (ch_idx = 0; ch_idx < sband->n_channels; ch_idx++) {
-			chan = &sband->channels[ch_idx];
-			if (chan->flags & IEEE80211_CHAN_DISABLED)
-				continue;
-
-			prCmd[band_idx]->rChannelPowerLimit[i].ucCentralCh = chan->hw_value;
-
-			i++; /*point to the next entry*/
-			if (i == ch_cnt)
-				break;
+		for (ch_idx = 0; ch_idx < ch_cnt; ch_idx++) {
+			prCmd[band_idx]->rChannelPowerLimit[ch_idx].ucCentralCh =
+				prChannelList[ch_idx];
 		}
 	}
 
@@ -1986,31 +2474,74 @@ VOID rlmDomainSendPwrLimitCmd_V2(P_ADAPTER_T prAdapter)
 	 */
 	rlmDomainGetTxPwrLimit(rlmDomainGetCountryCode(),
 							prAdapter->prGlueInfo,
-							prCmd[IEEE80211_BAND_2GHZ],
-							prCmd[IEEE80211_BAND_5GHZ]);
+							prCmd[KAL_BAND_2GHZ],
+							prCmd[KAL_BAND_5GHZ]);
 
 
-	for (band_idx = 0; band_idx < IEEE80211_NUM_BANDS; band_idx++) {
+	for (band_idx = 0; band_idx < KAL_NUM_BANDS; band_idx++) {
+		UINT_8 ucRemainChNum, i, ucTempChNum, prCmdBatchNum;
+		UINT_32 u4BufSize = 0;
+		P_CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T prTempCmd = NULL;
+		ENUM_BAND_T eBand = (band_idx == KAL_BAND_2GHZ) ?
+				BAND_2G4 : BAND_5G;
+
 		if (!prCmd[band_idx])
 			continue;
 
-		u4SetQueryInfoLen = u4SetCmdTableMaxSize[band_idx];
+		ucRemainChNum = prCmd[band_idx]->ucNum;
+		prCmdBatchNum =
+			(ucRemainChNum + TX_PWR_LIMIT_CMD_CH_NUM_THRESHOLD - 1) /
+			TX_PWR_LIMIT_CMD_CH_NUM_THRESHOLD;
 
-		/* Update tx max. power info to chip */
-		rStatus = wlanSendSetQueryCmd(prAdapter,	/* prAdapter */
-					      CMD_ID_SET_COUNTRY_POWER_LIMIT,	/* ucCID */
-					      TRUE,	/* fgSetQuery */
-					      FALSE,	/* fgNeedResp */
-					      FALSE,	/* fgIsOid */
-					      NULL,	/* pfCmdDoneHandler */
-					      NULL,	/* pfCmdTimeoutHandler */
-					      u4SetQueryInfoLen,	/* u4SetQueryInfoLen */
-					      (PUINT_8) prCmd[band_idx],	/* pucInfoBuffer */
-					      NULL,	/* pvSetQueryBuffer */
-					      0	/* u4SetQueryBufferLen */
-						);
+		for (i = 0; i < prCmdBatchNum; i++) {
+			if (i == prCmdBatchNum - 1)
+				ucTempChNum = ucRemainChNum;
+			else
+				ucTempChNum = TX_PWR_LIMIT_CMD_CH_NUM_THRESHOLD;
 
-		cnmMemFree(prAdapter, prCmd[band_idx]);
+			u4BufSize = sizeof(CMD_SET_COUNTRY_CHANNEL_POWER_LIMIT_V2_T) +
+				ucTempChNum * sizeof(CMD_CHANNEL_POWER_LIMIT_V2);
+
+			prTempCmd = cnmMemAlloc(prAdapter, RAM_TYPE_BUF, u4BufSize);
+
+			if (!prTempCmd) {
+				DBGLOG(RLM, ERROR, "Domain: no buf to send cmd\n");
+				goto error;
+			}
+
+			/*copy partial tx pwr limit*/
+			prTempCmd->ucNum = ucTempChNum;
+			prTempCmd->eband = eBand;
+			prTempCmd->countryCode = rlmDomainGetCountryCode();
+			kalMemCopy(&prTempCmd->rChannelPowerLimit[0],
+				&prCmd[band_idx]->rChannelPowerLimit[i * TX_PWR_LIMIT_CMD_CH_NUM_THRESHOLD],
+				ucTempChNum * sizeof(CMD_CHANNEL_POWER_LIMIT_V2));
+
+			u4SetQueryInfoLen = u4BufSize;
+			/* Update tx max. power info to chip */
+			rStatus = wlanSendSetQueryCmd(prAdapter,	/* prAdapter */
+				      CMD_ID_SET_COUNTRY_POWER_LIMIT,	/* ucCID */
+				      TRUE,	/* fgSetQuery */
+				      FALSE,	/* fgNeedResp */
+				      FALSE,	/* fgIsOid */
+				      NULL,	/* pfCmdDoneHandler */
+				      NULL,	/* pfCmdTimeoutHandler */
+				      u4SetQueryInfoLen,	/* u4SetQueryInfoLen */
+				      (PUINT_8) prTempCmd,	/* pucInfoBuffer */
+				      NULL,	/* pvSetQueryBuffer */
+				      0	/* u4SetQueryBufferLen */
+					);
+
+			cnmMemFree(prAdapter, prTempCmd);
+
+			ucRemainChNum -= ucTempChNum;
+		}
+	}
+
+error:
+	for (band_idx = 0; band_idx < KAL_NUM_BANDS; band_idx++) {
+		if (prCmd[band_idx])
+			cnmMemFree(prAdapter, prCmd[band_idx]);
 	}
 #endif
 }
@@ -2189,17 +2720,17 @@ void rlmDomainResetActiveChannel(void)
 void rlmDomainAddActiveChannel(u8 band)
 
 {
-	if (band == IEEE80211_BAND_2GHZ)
+	if (band == KAL_BAND_2GHZ)
 		g_mtk_regd_control.n_channel_active_2g += 1;
-	else if (band == IEEE80211_BAND_5GHZ)
+	else if (band == KAL_BAND_5GHZ)
 		g_mtk_regd_control.n_channel_active_5g += 1;
 }
 
 u8 rlmDomainGetActiveChannelCount(u8 band)
 {
-	if (band == IEEE80211_BAND_2GHZ)
+	if (band == KAL_BAND_2GHZ)
 		return g_mtk_regd_control.n_channel_active_2g;
-	else if (band == IEEE80211_BAND_5GHZ)
+	else if (band == KAL_BAND_5GHZ)
 		return g_mtk_regd_control.n_channel_active_5g;
 	else
 		return 0;
@@ -2251,30 +2782,45 @@ bool rlmDomainIsSameCountryCode(char *alpha2, u8 size_of_alpha2)
 	return (rlmDomainGetCountryCode() == alpha2_hex) ? TRUE : FALSE;
 }
 
-
-u32 rlmDomainGetCountryCode(void)
-{
-	return g_mtk_regd_control.alpha2;
-}
-
 void rlmDomainSetCountryCode(char *alpha2, u8 size_of_alpha2)
 {
-	u8 idx, max;
+	u8 max;
 	u8 buf_size;
 
 	buf_size = sizeof(g_mtk_regd_control.alpha2);
 	max = (buf_size < size_of_alpha2) ? buf_size : size_of_alpha2;
 
-	g_mtk_regd_control.alpha2 = 0;
+	g_mtk_regd_control.alpha2 = rlmDomainAlpha2ToU32(alpha2, max);
+}
+void rlmDomainSetDfsRegion(enum nl80211_dfs_regions dfs_region)
+{
+	g_mtk_regd_control.dfs_region = dfs_region;
+}
+
+enum nl80211_dfs_regions rlmDomainGetDfsRegion(void)
+{
+	return g_mtk_regd_control.dfs_region;
+}
+
+void rlmDomainSetTempCountryCode(char *alpha2, u8 size_of_alpha2)
+{
+	u8 idx, max;
+	u8 buf_size;
+
+	buf_size = sizeof(g_mtk_regd_control.tmp_alpha2);
+	max = (buf_size < size_of_alpha2) ? buf_size : size_of_alpha2;
+
+	g_mtk_regd_control.tmp_alpha2 = 0;
 
 	for (idx = 0; idx < max; idx++)
-		g_mtk_regd_control.alpha2 |= (alpha2[idx] << (idx * 8));
+		g_mtk_regd_control.tmp_alpha2 |= (alpha2[idx] << (idx * 8));
 
 }
 
 enum regd_state rlmDomainStateTransition(enum regd_state request_state, struct regulatory_request *pRequest)
 {
 	enum regd_state next_state, old_state;
+	bool the_same = 0;
 
 	old_state = g_mtk_regd_control.state;
 	next_state = REGD_STATE_INVALID;
@@ -2285,19 +2831,37 @@ enum regd_state rlmDomainStateTransition(enum regd_state request_state, struct r
 
 	switch (request_state) {
 	case REGD_STATE_SET_WW_CORE:
-		if ((old_state == REGD_STATE_SET_WW_CORE) || (old_state == REGD_STATE_INIT))
+		if ((old_state == REGD_STATE_SET_WW_CORE) || (old_state == REGD_STATE_INIT)
+		    || old_state == REGD_STATE_SET_COUNTRY_USER
+		    || old_state == REGD_STATE_SET_COUNTRY_IE)
 			next_state = request_state;
 
 		break;
 
 	case REGD_STATE_SET_COUNTRY_USER:
-	case REGD_STATE_SET_COUNTRY_DRIVER:
-		if ((old_state == REGD_STATE_SET_WW_CORE) || (old_state == REGD_STATE_INIT))
+		/* Allow user to set multiple times */
+		if ((old_state == REGD_STATE_SET_WW_CORE) || (old_state == REGD_STATE_INIT)
+		    || old_state == REGD_STATE_SET_COUNTRY_USER
+		    || old_state == REGD_STATE_SET_COUNTRY_IE)
 			next_state = request_state;
-		else if ((old_state == request_state)
-				 && (rlmDomainIsSameCountryCode(pRequest->alpha2, sizeof(pRequest->alpha2))))
-			next_state = old_state;
+		else
+			DBGLOG(RLM, ERROR, "Invalid old state = %d\n", old_state);
+		break;
+	case REGD_STATE_SET_COUNTRY_DRIVER:
+		if (old_state == REGD_STATE_SET_COUNTRY_USER) {
+			/*
+			 * Error.
+			 * Mixing using set_country_by_user and set_country_by_driver
+			 * is not allowed.
+			 */
+			break;
+		}
 
+		next_state = request_state;
+		break;
+
+	case REGD_STATE_SET_COUNTRY_IE:
+		next_state = request_state;
 		break;
 
 	default:
@@ -2305,55 +2869,15 @@ enum regd_state rlmDomainStateTransition(enum regd_state request_state, struct r
 	}
 
 	if (next_state == REGD_STATE_INVALID) {
-		DBGLOG(RLM, ERROR, "%s():  ERROR. trasntion to invalid state. %x, %x, %x, %x\n",
-				__func__, old_state, next_state, request_state,
-				rlmDomainIsSameCountryCode(pRequest->alpha2, sizeof(pRequest->alpha2)));
-		ASSERT(0);
+		DBGLOG(RLM, ERROR, "%s():  ERROR. trasntion to invalid state. o=%x, r=%x, s=%x\n",
+				__func__, old_state, request_state, the_same);
 	} else
-		DBGLOG(RLM, INFO, "%s():  trasntion to state = %x\n", __func__, next_state);
+		DBGLOG(RLM, INFO, "%s():  trasntion to state = %x (old = %x)\n",
+		__func__, next_state, g_mtk_regd_control.state);
 
 	g_mtk_regd_control.state = next_state;
 
 	return g_mtk_regd_control.state;
-}
-
-u32 rlmDomainSearchCountrySection(u32 country_code, const struct firmware *file)
-{
-	u32 count;
-	struct tx_pwr_section *pSection;
-
-	if (!file) {
-		DBGLOG(RLM, ERROR, "%s(): ERROR. file = null.\n", __func__);
-		return 0;
-	}
-
-	count = SIZE_OF_VERSION;
-
-	while (count < file->size) {
-		pSection = (struct tx_pwr_section *)(file->data + count);
-		count += sizeof(struct tx_pwr_section); /*prepare for the next search*/
-
-		if ((pSection->prefix == SECTION_PREFIX) &&
-			(pSection->country_code == country_code))
-			return count;
-	}
-
-	return 0;
-}
-
-BOOLEAN rlmDomainIsTheEndOfCountrySection(u32 start_offset, const struct firmware *file)
-{
-	struct tx_pwr_section *pSection;
-
-	if (start_offset >= file->size)
-		return TRUE;
-
-	pSection = (struct tx_pwr_section *)(file->data + start_offset);
-
-	if (pSection->prefix == SECTION_PREFIX)
-		return TRUE;
-	else
-		return FALSE;
 }
 
 void rlmDomainSetRefWiphy(struct wiphy *pWiphy)
@@ -2366,6 +2890,38 @@ struct wiphy *rlmDomainGetRefWiphy(void)
 	return g_mtk_regd_control.pRefWiphy;
 }
 
+/**
+ * rlmDomainChannelFlagString - Transform channel flags to readable string
+ *
+ * @ flags: the ieee80211_channel->flags for a channel
+ * @ buf: string buffer to put the transformed string
+ * @ buf_size: size of the buf
+ **/
+void rlmDomainChannelFlagString(u32 flags, char *buf, size_t buf_size)
+{
+	INT_32 buf_written = 0;
+
+	if (!flags || !buf || !buf_size)
+		return;
+
+	if (flags & IEEE80211_CHAN_DISABLED) {
+		LOGBUF(buf, ((INT_32)buf_size), buf_written, "DISABLED ");
+		/* If DISABLED, don't need to check other flags */
+		return;
+	}
+	if (flags & IEEE80211_CHAN_PASSIVE_FLAG)
+		LOGBUF(buf, ((INT_32)buf_size), buf_written, IEEE80211_CHAN_PASSIVE_STR " ");
+	if (flags & IEEE80211_CHAN_RADAR)
+		LOGBUF(buf, ((INT_32)buf_size), buf_written, "RADAR ");
+	if (flags & IEEE80211_CHAN_NO_HT40PLUS)
+		LOGBUF(buf, ((INT_32)buf_size), buf_written, "NO_HT40PLUS ");
+	if (flags & IEEE80211_CHAN_NO_HT40MINUS)
+		LOGBUF(buf, ((INT_32)buf_size), buf_written, "NO_HT40MINUS ");
+	if (flags & IEEE80211_CHAN_NO_80MHZ)
+		LOGBUF(buf, ((INT_32)buf_size), buf_written, "NO_80MHZ ");
+	if (flags & IEEE80211_CHAN_NO_160MHZ)
+		LOGBUF(buf, ((INT_32)buf_size), buf_written, "NO_160MHZ ");
+}
 
 void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 {
@@ -2374,6 +2930,12 @@ void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 	struct ieee80211_supported_band *sband;
 	struct ieee80211_channel *chan;
 	struct channel *pCh;
+	char chan_flag_string[64] = {0};
+	P_GLUE_INFO_T prGlueInfo;
+	UINT_8 ucChannelNum = 0;
+	BOOLEAN fgDisconnection = FALSE;
+	WLAN_STATUS rStatus;
+	UINT_32 u4BufLen;
 
 
 	if (!pWiphy) {
@@ -2382,6 +2944,12 @@ void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 		return;
 	}
 
+	/* Retrieve connected channel */
+	prGlueInfo = rlmDomainGetGlueInfo();
+	if (prGlueInfo && kalGetMediaStateIndicated(prGlueInfo) == PARAM_MEDIA_STATE_CONNECTED) {
+		ucChannelNum = wlanGetChannelNumberByNetwork(prGlueInfo->prAdapter,
+							     prGlueInfo->prAdapter->prAisBssInfo->ucBssIndex);
+	}
 
 	/*
 	 * Ready to parse the channel for bands
@@ -2391,17 +2959,7 @@ void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 	rlmDomainSetRefWiphy(pWiphy);
 
 	ch_count = 0;
-	for (band_idx = 0; band_idx < IEEE80211_NUM_BANDS; band_idx++) {
-		/**
-		 * enum nl80211_band - Frequency band
-		 * @NL80211_BAND_2GHZ: 2.4 GHz ISM band
-		 * @NL80211_BAND_5GHZ: around 5 GHz band (4.9 - 5.7 GHz)
-		 * @NL80211_BAND_60GHZ: around 60 GHz band (58.32 - 64.80 GHz)
-		 * @NUM_NL80211_BANDS: number of bands, avoid using this in userspace
-		 *	 since newer kernel versions may support more bands
-		 */
-
-		/*select band*/
+	for (band_idx = 0; band_idx < KAL_NUM_BANDS; band_idx++) {
 		sband = pWiphy->bands[band_idx];
 		if (!sband)
 			continue;
@@ -2409,10 +2967,17 @@ void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 		for (ch_idx = 0; ch_idx < sband->n_channels; ch_idx++) {
 			chan = &sband->channels[ch_idx];
 			pCh = (rlmDomainGetActiveChannels() + ch_count);
+			/* Parse flags and get readable string */
+			rlmDomainChannelFlagString(chan->flags, chan_flag_string, sizeof(chan_flag_string));
 
 			if (chan->flags & IEEE80211_CHAN_DISABLED) {
-				DBGLOG(RLM, INFO, "[DISABLE] channel[%d][%d]: freq = %d, ch_num = %d\n",
-					band_idx, ch_idx, chan->center_freq, chan->hw_value);
+				DBGLOG(RLM, INFO, "channels[%d][%d]: ch%d (freq = %d) flags=0x%x [ %s]\n",
+				    band_idx, ch_idx, chan->hw_value, chan->center_freq, chan->flags,
+				    chan_flag_string);
+
+				/* Disconnect AP in the end of this function*/
+				if (chan->hw_value == ucChannelNum)
+					fgDisconnection = TRUE;
 
 				continue;
 			}
@@ -2425,13 +2990,9 @@ void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 
 			rlmDomainAddActiveChannel(band_idx);
 
-			DBGLOG(RLM, INFO, "[EN-ABLE] channel[%d][%d]: freq = %d, ch_num = %d ",
-					band_idx, ch_idx, chan->center_freq, chan->hw_value);
-
-			DBGLOG(RLM, INFO, "flags = %x (radar = %d, no ht40 PLUS = %d, no ht40 minus = %d)\n",
-					chan->flags, (chan->flags & IEEE80211_CHAN_RADAR)?1:0,
-								(chan->flags & IEEE80211_CHAN_NO_HT40PLUS)?1:0,
-								(chan->flags & IEEE80211_CHAN_NO_HT40MINUS)?1:0);
+			DBGLOG(RLM, INFO, "channels[%d][%d]: ch%d (freq = %d) flgs=0x%x [ %s]\n",
+				band_idx, ch_idx, chan->hw_value, chan->center_freq, chan->flags,
+				chan_flag_string);
 
 			pCh->chNum = chan->hw_value;
 			pCh->flags = chan->flags;
@@ -2440,14 +3001,23 @@ void rlmDomainParsingChannel(IN struct wiphy *pWiphy)
 		}
 
 	}
+
+	/* Disconnect with AP if connected channel is disabled in new country */
+	if (fgDisconnection) {
+		DBGLOG(RLM, STATE, "Disconnect! CH%d is DISABLED in this country\n", ucChannelNum);
+		rStatus = kalIoctl(prGlueInfo, wlanoidSetDisassociate, NULL, 0, FALSE, FALSE, TRUE, &u4BufLen);
+
+		if (rStatus != WLAN_STATUS_SUCCESS)
+			DBGLOG(RLM, WARN, "disassociate error:%lx\n", rStatus);
+	}
 }
 void rlmExtractChannelInfo(u32 max_ch_count, struct acctive_channel_list *prBuff)
 {
 	u32 ch_count, idx;
 	struct channel *pCh;
 
-	prBuff->n_channels_2g = rlmDomainGetActiveChannelCount(IEEE80211_BAND_2GHZ);
-	prBuff->n_channels_5g = rlmDomainGetActiveChannelCount(IEEE80211_BAND_5GHZ);
+	prBuff->n_channels_2g = rlmDomainGetActiveChannelCount(KAL_BAND_2GHZ);
+	prBuff->n_channels_5g = rlmDomainGetActiveChannelCount(KAL_BAND_5GHZ);
 	ch_count = prBuff->n_channels_2g + prBuff->n_channels_5g;
 
 	if (ch_count > max_ch_count) {
@@ -2485,6 +3055,7 @@ const struct ieee80211_regdomain *rlmDomainSearchRegdomainFromLocalDataBase(char
 
 	DBGLOG(RLM, ERROR, "%s(): Error, Cannot find the correct RegDomain. country = %s.\n",
 			__func__, alpha2);
+	DBGLOG(RLM, INFO, "    Set as default WW.\n");
 
 	return &default_regdom_ww; /*default world wide*/
 #else
@@ -2492,6 +3063,24 @@ const struct ieee80211_regdomain *rlmDomainSearchRegdomainFromLocalDataBase(char
 #endif
 }
 
+
+const struct ieee80211_regdomain *rlmDomainGetLocalDefaultRegd(void)
+{
+#if (CFG_SUPPORT_SINGLE_SKU_LOCAL_DB == 1)
+	return &default_regdom_ww;
+#else
+	return NULL;
+#endif
+}
+P_GLUE_INFO_T rlmDomainGetGlueInfo(void)
+{
+	return g_mtk_regd_control.pGlueInfo;
+}
+
+bool rlmDomainIsEfuseUsed(void)
+{
+	return g_mtk_regd_control.isEfuseCountryCodeUsed;
+}
 #endif
 
 WLAN_STATUS rlmDomainExtractSingleSkuInfoFromFirmware(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucEventBuf)
@@ -2533,6 +3122,7 @@ void rlmDomainSendInfoToFirmware(IN P_ADAPTER_T prAdapter)
 		prReq = &request;
 	}
 
+	g_mtk_regd_control.pGlueInfo = prAdapter->prGlueInfo;
 	mtk_reg_notify(priv_to_wiphy(prAdapter->prGlueInfo), prReq);
 #endif
 }
@@ -2545,11 +3135,12 @@ ENUM_CHNL_EXT_T rlmSelectSecondaryChannelType(P_ADAPTER_T prAdapter, ENUM_BAND_T
 	below_ch = primary_ch - CHNL_SPAN_20;
 	above_ch = primary_ch + CHNL_SPAN_20;
 
+	if (rlmDomainIsLegalChannel(prAdapter, band, above_ch))
+		return CHNL_EXT_SCA;
+
 	if (rlmDomainIsLegalChannel(prAdapter, band, below_ch))
 		return CHNL_EXT_SCB;
 
-	if (rlmDomainIsLegalChannel(prAdapter, band, above_ch))
-		return CHNL_EXT_SCA;
 #endif
 
 	return CHNL_EXT_SCN;
@@ -2560,9 +3151,8 @@ void rlmDomainOidSetCountry(IN P_ADAPTER_T prAdapter, char *country, u8 size_of_
 #if (CFG_SUPPORT_SINGLE_SKU == 1)
 	struct regulatory_request request;
 
-	rlmDomainSetCountryCode(country, size_of_country);
-
 	if (rlmDomainIsUsingLocalRegDomainDataBase()) {
+		rlmDomainSetTempCountryCode(country, size_of_country);
 		request.initiator = NL80211_REGDOM_SET_BY_DRIVER;
 		mtk_reg_notify(priv_to_wiphy(prAdapter->prGlueInfo), &request);
 	} else {
@@ -2571,4 +3161,36 @@ void rlmDomainOidSetCountry(IN P_ADAPTER_T prAdapter, char *country, u8 size_of_
 	}
 #endif
 }
+
+u32 rlmDomainGetCountryCode(void)
+{
+#if (CFG_SUPPORT_SINGLE_SKU == 1)
+	return g_mtk_regd_control.alpha2;
+#else
+	return 0;
+#endif
+}
+
+u32 rlmDomainGetTempCountryCode(void)
+{
+#if (CFG_SUPPORT_SINGLE_SKU == 1)
+	return g_mtk_regd_control.tmp_alpha2;
+#else
+	return 0;
+#endif
+}
+
+void rlmDomainAssert(BOOLEAN cond)
+{
+	/* bypass this check because single sku is not enable */
+	if (!regd_is_single_sku_en())
+		return;
+
+	if (!cond) {
+		WARN_ON(1);
+		DBGLOG(RLM, ERROR, "[WARNING!!] RLM unexpected case.\n");
+	}
+
+}
+
 

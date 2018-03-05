@@ -128,6 +128,10 @@ p2pDevStateInit_REQING_CHANNEL(IN P_ADAPTER_T prAdapter,
 
 		ASSERT(prP2pMsgChnlReq);
 
+#if (CFG_HW_WMM_BY_BSS == 1)
+		if (prBssInfo->fgIsWmmInited == FALSE)
+			prBssInfo->ucWmmQueSet = MAX_HW_WMM_INDEX;
+#endif
 #if CFG_SUPPORT_DBDC
 		cnmGetDbdcCapability(prAdapter,
 			prBssInfo->ucBssIndex,
@@ -136,9 +140,11 @@ p2pDevStateInit_REQING_CHANNEL(IN P_ADAPTER_T prAdapter,
 			wlanGetSupportNss(prAdapter, prBssInfo->ucBssIndex),
 			&rDbdcCap);
 
-		prBssInfo->eDBDCBand = rDbdcCap.ucDbdcBandIndex;
+		prBssInfo->eDBDCBand = ENUM_BAND_AUTO;
 		prBssInfo->ucNss = rDbdcCap.ucNss;
+#if (CFG_HW_WMM_BY_BSS == 0)
 		prBssInfo->ucWmmQueSet = rDbdcCap.ucWmmSetIndex;
+#endif
 #endif /*CFG_SUPPORT_DBDC*/
 		prChnlReqInfo->u4MaxInterval = prP2pMsgChnlReq->u4Duration;
 		prChnlReqInfo->ucReqChnlNum = prP2pMsgChnlReq->rChannelInfo.ucChannelNum;
@@ -321,19 +327,18 @@ p2pDevStateAbort_OFF_CHNL_TX(IN P_ADAPTER_T prAdapter,
 {
 	P_P2P_OFF_CHNL_TX_REQ_INFO_T prP2pOffChnlTxPkt = (P_P2P_OFF_CHNL_TX_REQ_INFO_T) NULL;
 
-	do {
-		ASSERT_BREAK((prAdapter != NULL) && (prP2pMgmtTxInfo != NULL) && (prChnlReqInfo != NULL));
+	if (eNextState != P2P_DEV_STATE_OFF_CHNL_TX) {
+		while (!LINK_IS_EMPTY(&(prP2pMgmtTxInfo->rP2pTxReqLink))) {
+			LINK_REMOVE_HEAD(&(prP2pMgmtTxInfo->rP2pTxReqLink),
+					 prP2pOffChnlTxPkt, P_P2P_OFF_CHNL_TX_REQ_INFO_T);
 
-		if (eNextState != P2P_DEV_STATE_OFF_CHNL_TX) {
-			while (!LINK_IS_EMPTY(&(prP2pMgmtTxInfo->rP2pTxReqLink))) {
-				LINK_REMOVE_HEAD(&(prP2pMgmtTxInfo->rP2pTxReqLink),
-						 prP2pOffChnlTxPkt, P_P2P_OFF_CHNL_TX_REQ_INFO_T);
-
+			if (prP2pOffChnlTxPkt)
 				kalP2PIndicateMgmtTxStatus(prAdapter->prGlueInfo,
-							   prP2pOffChnlTxPkt->prMgmtTxMsdu, FALSE);
-			}
-
-			p2pFuncReleaseCh(prAdapter, P2P_DEV_BSS_INDEX, prChnlReqInfo);
+						   prP2pOffChnlTxPkt->prMgmtTxMsdu, FALSE);
+			else
+				DBGLOG(P2P, INFO, "No packet for indicating Tx status!\n");
 		}
-	} while (FALSE);
+
+		p2pFuncReleaseCh(prAdapter, P2P_DEV_BSS_INDEX, prChnlReqInfo);
+	}
 }				/* p2pDevSateAbort_OFF_CHNL_TX */

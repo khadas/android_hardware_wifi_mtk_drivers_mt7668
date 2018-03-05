@@ -417,7 +417,7 @@ saaFsmSendEventJoinComplete(IN P_ADAPTER_T prAdapter,
 	}
 #endif
 	else {
-		ASSERT(0);
+		DBGLOG(SAA, ERROR, "Invalid case in %s.\n", __func__);
 		return WLAN_STATUS_FAILURE;
 	}
 

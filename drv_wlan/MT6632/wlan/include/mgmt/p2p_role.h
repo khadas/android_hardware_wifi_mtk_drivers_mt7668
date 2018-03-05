@@ -103,9 +103,12 @@ typedef struct _MSG_P2P_BEACON_UPDATE_T {
 	UINT_8 ucRoleIndex;
 	UINT_32 u4BcnHdrLen;
 	UINT_32 u4BcnBodyLen;
+	UINT_32 u4AssocRespLen;
 	PUINT_8 pucBcnHdr;
 	PUINT_8 pucBcnBody;
-	UINT_8 aucBuffer[1];	/* Header & Body are put here. */
+	PUINT_8 pucAssocRespIE;
+	BOOLEAN fgIsWepCipher;
+	UINT_8 aucBuffer[1];	/* Header & Body & Extra IEs are put here. */
 } MSG_P2P_BEACON_UPDATE_T, *P_MSG_P2P_BEACON_UPDATE_T;
 
 typedef struct _MSG_P2P_MGMT_FRAME_UPDATE_T {
@@ -166,6 +169,49 @@ typedef struct _MSG_P2P_START_AP_T {
 	INT_32 i4InactiveTimeout;
 } MSG_P2P_START_AP_T, *P_MSG_P2P_START_AP_T;
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+typedef struct _MSG_P2P_DFS_CAC_T {
+	MSG_HDR_T rMsgHdr;
+	ENUM_CHANNEL_WIDTH_T eChannelWidth;
+	UINT_8 ucRoleIdx;
+} MSG_P2P_DFS_CAC_T, *P_MSG_P2P_DFS_CAC_T;
+
+typedef struct _MSG_P2P_RADAR_DETECT_T {
+	MSG_HDR_T rMsgHdr;
+	UINT_8 ucBssIndex;
+} MSG_P2P_RADAR_DETECT_T, *P_MSG_P2P_RADAR_DETECT_T;
+
+struct P2P_RADAR_INFO {
+	UINT_8 ucRadarReportMode; /*0: Only report radar detected;   1:  Add parameter reports*/
+	UINT_8 ucRddIdx;
+	UINT_8 ucLongDetected;
+	UINT_8 ucPeriodicDetected;
+	UINT_8 ucLPBNum;
+	UINT_8 ucPPBNum;
+	UINT_8 ucLPBPeriodValid;
+	UINT_8 ucLPBWidthValid;
+	UINT_8 ucPRICountM1;
+	UINT_8 ucPRICountM1TH;
+	UINT_8 ucPRICountM2;
+	UINT_8 ucPRICountM2TH;
+	UINT_32 u4PRI1stUs;
+	LONG_PULSE_BUFFER_T arLpbContent[32];
+	PERIODIC_PULSE_BUFFER_T arPpbContent[32];
+};
+
+typedef struct _MSG_P2P_SET_NEW_CHANNEL_T {
+	MSG_HDR_T rMsgHdr;
+	ENUM_CHANNEL_WIDTH_T eChannelWidth;
+	UINT_8 ucRoleIdx;
+	UINT_8 ucBssIndex;
+} MSG_P2P_SET_NEW_CHANNEL_T, *P_MSG_P2P_SET_NEW_CHANNEL_T;
+
+typedef struct _MSG_P2P_CSA_DONE_T {
+	MSG_HDR_T rMsgHdr;
+	UINT_8 ucBssIndex;
+} MSG_P2P_CSA_DONE_T, *P_MSG_P2P_CSA_DONE_T;
+#endif
+
 typedef struct _MSG_P2P_DEL_IFACE_T {
 	MSG_HDR_T rMsgHdr;
 	UINT_8 ucRoleIdx;
@@ -199,6 +245,10 @@ typedef enum _ENUM_P2P_ROLE_STATE_T {
 	P2P_ROLE_STATE_REQING_CHANNEL,
 	P2P_ROLE_STATE_AP_CHNL_DETECTION,	/* Requesting Channel to Send Specific Frame. */
 	P2P_ROLE_STATE_GC_JOIN,
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	P2P_ROLE_STATE_DFS_CAC,
+	P2P_ROLE_STATE_SWITCH_CHANNEL,
+#endif
 	P2P_ROLE_STATE_NUM
 } ENUM_P2P_ROLE_STATE_T, *P_ENUM_P2P_ROLE_STATE_T;
 
@@ -231,6 +281,18 @@ typedef struct _P2P_CONNECTION_REQ_INFO_T {
 	RF_CHANNEL_INFO_T rChannelInfo;
 	ENUM_CHNL_EXT_T eChnlExt;
 
+	/* To record channel bandwidth from CFG80211 */
+	ENUM_MAX_BANDWIDTH_SETTING eChnlBw;
+
+	/* To record primary channel frequency (MHz) from CFG80211 */
+	UINT_16 u2PriChnlFreq;
+
+	/* To record Channel Center Frequency Segment 0 (MHz) from CFG80211 */
+	UINT_32 u4CenterFreq1;
+
+	/* To record Channel Center Frequency Segment 1 (MHz) from CFG80211 */
+	UINT_32 u4CenterFreq2;
+
 	/* For ASSOC Req. */
 	UINT_32 u4BufLength;
 	UINT_8 aucIEBuf[MAX_IE_LENGTH];
@@ -255,6 +317,10 @@ struct _P2P_ROLE_FSM_INFO_T {
 
 	/* FSM Timer */
 	TIMER_T rP2pRoleFsmTimeoutTimer;
+
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	TIMER_T rDfsShutDownTimer;
+#endif
 
 	/* Packet filter for P2P module. */
 	UINT_32 u4P2pPacketFilter;
@@ -285,6 +351,18 @@ VOID p2pRoleFsmRunEventDelIface(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHd
 
 VOID p2pRoleFsmRunEventStopAP(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
 
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+VOID p2pRoleFsmRunEventDfsCac(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
+
+VOID p2pRoleFsmRunEventRadarDet(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
+
+VOID p2pRoleFsmRunEventSetNewChannel(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
+
+VOID p2pRoleFsmRunEventCsaDone(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
+
+VOID p2pRoleFsmRunEventDfsShutDownTimeout(IN P_ADAPTER_T prAdapter, IN ULONG ulParamPtr);
+#endif
+
 VOID p2pRoleFsmRunEventScanRequest(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
 
 VOID
@@ -298,6 +376,10 @@ VOID p2pRoleFsmRunEventTimeout(IN P_ADAPTER_T prAdapter, IN ULONG ulParamPtr);
 VOID p2pRoleFsmDeauthTimeout(IN P_ADAPTER_T prAdapter, IN ULONG ulParamPtr);
 
 VOID p2pRoleFsmRunEventBeaconTimeout(IN P_ADAPTER_T prAdapter, IN P_BSS_INFO_T prP2pBssInfo);
+
+VOID p2pRoleUpdateACLEntry(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIdx);
+
+BOOL p2pRoleProcessACLInspection(IN P_ADAPTER_T prAdapter, IN PUCHAR pMacAddr, IN UINT_8 ucBssIdx);
 
 WLAN_STATUS
 p2pRoleFsmRunEventAAAComplete(IN P_ADAPTER_T prAdapter, IN P_STA_RECORD_T prStaRec, IN P_BSS_INFO_T prP2pBssInfo);
@@ -326,7 +408,7 @@ VOID p2pRoleFsmRunEventRxDisassociation(IN P_ADAPTER_T prAdapter, IN P_STA_RECOR
 /* //////////////////////// TO BE REFINE ///////////////////// */
 VOID p2pRoleFsmRunEventSwitchOPMode(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
 
-VOID p2pFsmRunEventBeaconUpdate(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
+VOID p2pRoleFsmRunEventBeaconUpdate(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
 
 VOID p2pRoleFsmRunEventDissolve(IN P_ADAPTER_T prAdapter, IN P_MSG_HDR_T prMsgHdr);
 

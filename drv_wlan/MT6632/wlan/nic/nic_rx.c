@@ -148,6 +148,9 @@ static RX_EVENT_HANDLER_T arEventTable[] = {
 	{EVENT_ID_STATISTICS,				nicEventStatistics},
 	{EVENT_ID_WLAN_INFO,				nicEventWlanInfo},
 	{EVENT_ID_MIB_INFO,					nicEventMibInfo},
+#if CFG_SUPPORT_LAST_SEC_MCS_INFO
+	{EVENT_ID_TX_MCS_INFO,				nicEventTxMcsInfo},
+#endif
 	{EVENT_ID_CH_PRIVILEGE,				cnmChMngrHandleChEvent},
 	{EVENT_ID_BSS_ABSENCE_PRESENCE,		qmHandleEventBssAbsencePresence},
 	{EVENT_ID_STA_CHANGE_PS_MODE,		qmHandleEventStaChangePsMode},
@@ -174,7 +177,21 @@ static RX_EVENT_HANDLER_T arEventTable[] = {
 #endif
 	{EVENT_ID_HIF_CTRL,					nicEventHifCtrl},
 	{EVENT_ID_RDD_SEND_PULSE,			nicEventRddSendPulse},
-	{EVENT_ID_UPDATE_COEX_PHYRATE,		nicEventUpdateCoexPhyrate}
+#if (CFG_SUPPORT_DFS_MASTER == 1)
+	{EVENT_ID_UPDATE_COEX_PHYRATE,		nicEventUpdateCoexPhyrate},
+	{EVENT_ID_RDD_REPORT,			cnmRadarDetectEvent},
+	{EVENT_ID_CSA_DONE,			cnmCsaDoneEvent},
+#else
+	{EVENT_ID_UPDATE_COEX_PHYRATE,		nicEventUpdateCoexPhyrate},
+#endif
+#if (CFG_WOW_SUPPORT == 1)
+	{EVENT_ID_WOW_WAKEUP_REASON,		nicEventWakeUpReason},
+#endif
+	{EVENT_ID_CSI_DATA,                 nicEventCSIData},
+
+#if CFG_SUPPORT_REPLAY_DETECTION
+	{EVENT_ID_GET_GTK_REKEY_DATA,       nicEventGetGtkDataSync},
+#endif
 };
 
 /*******************************************************************************
@@ -224,7 +241,10 @@ VOID nicRxInitialize(IN P_ADAPTER_T prAdapter)
 	for (i = CFG_RX_MAX_PKT_NUM; i != 0; i--) {
 		prSwRfb = (P_SW_RFB_T) pucMemHandle;
 
-		nicRxSetupRFB(prAdapter, prSwRfb);
+		if (nicRxSetupRFB(prAdapter, prSwRfb)) {
+			DBGLOG(RX, ERROR, "nicRxInitialize failed: Cannot allocate packet buffer for SwRfb!\n");
+			return;
+		}
 		nicRxReturnRFB(prAdapter, prSwRfb);
 
 		pucMemHandle += ALIGN_4(sizeof(SW_RFB_T));
@@ -825,9 +845,7 @@ VOID nicRxProcessPktWithoutReorder(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwR
 	BOOL fgIsRetained = FALSE;
 	UINT_32 u4CurrentRxBufferCount;
 	/* P_STA_RECORD_T prStaRec = (P_STA_RECORD_T)NULL; */
-#if CFG_SUPPORT_MULTITHREAD
-	KAL_SPIN_LOCK_DECLARATION();
-#endif
+
 	DEBUGFUNC("nicRxProcessPktWithoutReorder");
 	/* DBGLOG(RX, TRACE, ("\n")); */
 
@@ -881,23 +899,35 @@ VOID nicRxProcessPktWithoutReorder(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSwR
 	}
 
 #if CFG_SUPPORT_MULTITHREAD
-	KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_RX_TO_OS_QUE);
-	QUEUE_INSERT_TAIL(&(prAdapter->rRxQueue), (P_QUE_ENTRY_T) GLUE_GET_PKT_QUEUE_ENTRY(prSwRfb->pvPacket));
-	KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_RX_TO_OS_QUE);
+	if (HAL_IS_RX_DIRECT(prAdapter)) {
+		kalRxIndicateOnePkt(prAdapter->prGlueInfo,
+				    (PVOID) GLUE_GET_PKT_DESCRIPTOR(GLUE_GET_PKT_QUEUE_ENTRY(prSwRfb->pvPacket)));
+		RX_ADD_CNT(prRxCtrl, RX_DATA_INDICATION_COUNT, 1);
+		if (fgIsRetained)
+			RX_ADD_CNT(prRxCtrl, RX_DATA_RETAINED_COUNT, 1);
+	} else {
+		KAL_SPIN_LOCK_DECLARATION();
 
-	prRxCtrl->ucNumIndPacket++;
-	kalSetTxEvent2Rx(prAdapter->prGlueInfo);
+		KAL_ACQUIRE_SPIN_LOCK(prAdapter, SPIN_LOCK_RX_TO_OS_QUE);
+		QUEUE_INSERT_TAIL(&(prAdapter->rRxQueue), (P_QUE_ENTRY_T) GLUE_GET_PKT_QUEUE_ENTRY(prSwRfb->pvPacket));
+		KAL_RELEASE_SPIN_LOCK(prAdapter, SPIN_LOCK_RX_TO_OS_QUE);
+
+		prRxCtrl->ucNumIndPacket++;
+		kalSetTxEvent2Rx(prAdapter->prGlueInfo);
+	}
 #else
 	prRxCtrl->apvIndPacket[prRxCtrl->ucNumIndPacket] = prSwRfb->pvPacket;
 	prRxCtrl->ucNumIndPacket++;
 #endif
 
+#ifndef LINUX
 	if (fgIsRetained) {
 		prRxCtrl->apvRetainedPacket[prRxCtrl->ucNumRetainedPacket] = prSwRfb->pvPacket;
 		prRxCtrl->ucNumRetainedPacket++;
-	} else {
+	} else
+#endif
 		prSwRfb->pvPacket = NULL;
-	}
+
 
 	/* Return RFB */
 	if (nicRxSetupRFB(prAdapter, prSwRfb)) {
@@ -1284,7 +1314,7 @@ VOID nicRxProcessMonitorPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwR
 	}
 
 	/* Bit Number 5 ANT SIGNAL */
-	rMonitorRadiotap.ucAntennaSignal = (((prRxStatusGroup3)->u4RxVector[3] & RX_VT_IB_RSSI_MASK));
+	rMonitorRadiotap.ucAntennaSignal = RCPI_TO_dBm(HAL_RX_STATUS_GET_RCPI0(prSwRfb->prRxStatusGroup3));
 
 	/* Bit Number 6 ANT NOISE */
 	rMonitorRadiotap.ucAntennaNoise = ((((prRxStatusGroup3)->u4RxVector[5] & RX_VT_NF0_MASK) >> 1) + 128);
@@ -1329,6 +1359,7 @@ VOID nicRxProcessMonitorPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwR
 	prRxCtrl->ucNumIndPacket++;
 #endif
 
+	prSwRfb->pvPacket = NULL;
 	/* Return RFB */
 	if (nicRxSetupRFB(prAdapter, prSwRfb)) {
 		DBGLOG(RX, WARN, "Cannot allocate packet buffer for SwRfb!\n");
@@ -1359,6 +1390,7 @@ VOID nicRxProcessDataPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb)
 	P_SW_RFB_T prRetSwRfb, prNextSwRfb;
 	P_HW_MAC_RX_DESC_T prRxStatus;
 	BOOLEAN fgDrop;
+	struct mt66xx_chip_info *prChipInfo;
 
 	DEBUGFUNC("nicRxProcessDataPacket");
 	/* DBGLOG(INIT, TRACE, ("\n")); */
@@ -1370,6 +1402,7 @@ VOID nicRxProcessDataPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb)
 
 	prRxStatus = prSwRfb->prRxStatus;
 	prRxCtrl = &prAdapter->rRxCtrl;
+	prChipInfo = prAdapter->chip_info;
 
 	/* Check AMPDU_nERR_Bitmap */
 	prSwRfb->fgDataFrame = TRUE;
@@ -1402,6 +1435,20 @@ VOID nicRxProcessDataPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb)
 			}
 		}
 #if UNIFIED_MAC_RX_FORMAT
+		else if (HAL_RX_STATUS_IS_LLC_MIS(prRxStatus)
+				&& !HAL_RX_STATUS_IS_ERROR(prRxStatus)
+				&& !FEAT_SUP_LLC_VLAN_RX(prChipInfo)) {
+			PUINT_16 pu2EtherType;
+
+			nicRxFillRFB(prAdapter, prSwRfb);
+
+			pu2EtherType = (PUINT_16)((PUINT_8)prSwRfb->pvHeader + 2*MAC_ADDR_LEN);
+
+			/* If ethernet type is VLAN, do not drop it. Pass up to driver process */
+			if (prSwRfb->u2HeaderLen >= ETH_HLEN
+				&& *pu2EtherType == NTOHS(ETH_P_VLAN))
+				fgDrop = FALSE;
+		}
 #else
 		else if (HAL_RX_STATUS_IS_LLC_MIS(prRxStatus)) {
 			DBGLOG(RSN, EVENT, ("LLC_MIS_ERR\n"));
@@ -1430,7 +1477,7 @@ VOID nicRxProcessDataPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb)
 #endif
 
 #if CFG_TCP_IP_CHKSUM_OFFLOAD || CFG_TCP_IP_CHKSUM_OFFLOAD_NDIS_60
-	if (fgDrop == FALSE) {
+	if (prAdapter->fgIsSupportCsumOffload && fgDrop == FALSE) {
 		UINT_32 u4TcpUdpIpCksStatus;
 		PUINT_32 pu4Temp;
 
@@ -1458,6 +1505,15 @@ VOID nicRxProcessDataPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb)
 
 					prAdapter->arStaRec[prRetSwRfb->ucStaRecIdx].u4RxVector1 =
 						HAL_RX_VECTOR_GET_RX_VECTOR(prRetSwRfb->prRxStatusGroup3, 1);
+
+					prAdapter->arStaRec[prRetSwRfb->ucStaRecIdx].u4RxVector2 =
+						HAL_RX_VECTOR_GET_RX_VECTOR(prRetSwRfb->prRxStatusGroup3, 2);
+
+					prAdapter->arStaRec[prRetSwRfb->ucStaRecIdx].u4RxVector3 =
+						HAL_RX_VECTOR_GET_RX_VECTOR(prRetSwRfb->prRxStatusGroup3, 3);
+
+					prAdapter->arStaRec[prRetSwRfb->ucStaRecIdx].u4RxVector4 =
+						HAL_RX_VECTOR_GET_RX_VECTOR(prRetSwRfb->prRxStatusGroup3, 4);
 				}
 #endif
 				/* save next first */
@@ -2705,12 +2761,23 @@ VOID nicRxProcessRFBs(IN P_ADAPTER_T prAdapter)
 				switch (prSwRfb->ucPacketType) {
 				case RX_PKT_TYPE_RX_DATA:
 #if CFG_SUPPORT_SNIFFER
-					if (prAdapter->prGlueInfo->fgIsEnableMon) {
+					if (prAdapter->prGlueInfo->fgIsEnableMon && HAL_IS_RX_DIRECT(prAdapter)) {
+						spin_lock_bh(&prAdapter->prGlueInfo->rSpinLock[SPIN_LOCK_RX_DIRECT]);
+						nicRxProcessMonitorPacket(prAdapter, prSwRfb);
+						spin_unlock_bh(&prAdapter->prGlueInfo->rSpinLock[SPIN_LOCK_RX_DIRECT]);
+						break;
+					} else if (prAdapter->prGlueInfo->fgIsEnableMon) {
 						nicRxProcessMonitorPacket(prAdapter, prSwRfb);
 						break;
 					}
 #endif
-					nicRxProcessDataPacket(prAdapter, prSwRfb);
+					if (HAL_IS_RX_DIRECT(prAdapter)) {
+						spin_lock_bh(&prAdapter->prGlueInfo->rSpinLock[SPIN_LOCK_RX_DIRECT]);
+						nicRxProcessDataPacket(prAdapter, prSwRfb);
+						spin_unlock_bh(&prAdapter->prGlueInfo->rSpinLock[SPIN_LOCK_RX_DIRECT]);
+					} else {
+						nicRxProcessDataPacket(prAdapter, prSwRfb);
+					}
 					break;
 
 				case RX_PKT_TYPE_SW_DEFINED:
@@ -2955,6 +3022,7 @@ VOID nicRxQueryStatus(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucBuffer, OUT PUINT_
 {
 	P_RX_CTRL_T prRxCtrl;
 	PUINT_8 pucCurrBuf = pucBuffer;
+	UINT_32 u4CurrCount;
 
 	ASSERT(prAdapter);
 	prRxCtrl = &prAdapter->rRxCtrl;
@@ -2963,13 +3031,21 @@ VOID nicRxQueryStatus(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucBuffer, OUT PUINT_
 	/* if (pucBuffer) {} *//* For Windows, we'll print directly instead of sprintf() */
 	ASSERT(pu4Count);
 
-	SPRINTF(pucCurrBuf, ("\n\nRX CTRL STATUS:"));
-	SPRINTF(pucCurrBuf, ("\n==============="));
-	SPRINTF(pucCurrBuf, ("\nFREE RFB w/i BUF LIST :%9ld", prRxCtrl->rFreeSwRfbList.u4NumElem));
-	SPRINTF(pucCurrBuf, ("\nFREE RFB w/o BUF LIST :%9ld", prRxCtrl->rIndicatedRfbList.u4NumElem));
-	SPRINTF(pucCurrBuf, ("\nRECEIVED RFB LIST     :%9ld", prRxCtrl->rReceivedRfbList.u4NumElem));
+#define SPRINTF_RX_QSTATUS(arg) \
+	{ \
+		u4CurrCount = scnprintf(pucCurrBuf, *pu4Count, PRINTF_ARG arg); \
+		pucCurrBuf += (UINT_8)u4CurrCount; \
+		*pu4Count -= u4CurrCount; \
+	}
 
-	SPRINTF(pucCurrBuf, ("\n\n"));
+
+	SPRINTF_RX_QSTATUS(("\n\nRX CTRL STATUS:"));
+	SPRINTF_RX_QSTATUS(("\n==============="));
+	SPRINTF_RX_QSTATUS(("\nFREE RFB w/i BUF LIST :%9ld", prRxCtrl->rFreeSwRfbList.u4NumElem));
+	SPRINTF_RX_QSTATUS(("\nFREE RFB w/o BUF LIST :%9ld", prRxCtrl->rIndicatedRfbList.u4NumElem));
+	SPRINTF_RX_QSTATUS(("\nRECEIVED RFB LIST     :%9ld", prRxCtrl->rReceivedRfbList.u4NumElem));
+
+	SPRINTF_RX_QSTATUS(("\n\n"));
 
 	/* *pu4Count = (UINT_32)((UINT_32)pucCurrBuf - (UINT_32)pucBuffer); */
 
@@ -3011,6 +3087,7 @@ VOID nicRxQueryStatistics(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucBuffer, OUT PU
 {
 	P_RX_CTRL_T prRxCtrl;
 	PUINT_8 pucCurrBuf = pucBuffer;
+	UINT_32 u4CurrCount;
 
 	ASSERT(prAdapter);
 	prRxCtrl = &prAdapter->rRxCtrl;
@@ -3020,7 +3097,12 @@ VOID nicRxQueryStatistics(IN P_ADAPTER_T prAdapter, IN PUINT_8 pucBuffer, OUT PU
 	ASSERT(pu4Count);
 
 #define SPRINTF_RX_COUNTER(eCounter) \
-	SPRINTF(pucCurrBuf, ("%-30s : %ld\n", #eCounter, (UINT_32)prRxCtrl->au8Statistics[eCounter]))
+	{ \
+		u4CurrCount = scnprintf(pucCurrBuf, *pu4Count, "%-30s : %ld\n", \
+					#eCounter, (UINT_32)prRxCtrl->au8Statistics[eCounter]); \
+		pucCurrBuf += (UINT_8)u4CurrCount; \
+		*pu4Count -= u4CurrCount; \
+	}
 
 	SPRINTF_RX_COUNTER(RX_MPDU_TOTAL_COUNT);
 	SPRINTF_RX_COUNTER(RX_SIZE_ERR_DROP_COUNT);
@@ -3169,7 +3251,7 @@ WLAN_STATUS nicRxProcessActionFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSw
 		return WLAN_STATUS_INVALID_PACKET;
 	prActFrame = (P_WLAN_ACTION_FRAME) prSwRfb->pvHeader;
 
-	/* DBGLOG(RSN, TRACE, ("[Rx] nicRxProcessActionFrame\n")); */
+	DBGLOG(RSN, INFO, "Action frame category=%d\n", prActFrame->ucCategory);
 
 #if CFG_SUPPORT_802_11W
 	if ((prActFrame->ucCategory <= CATEGORY_PROTECTED_DUAL_OF_PUBLIC_ACTION &&
@@ -3195,7 +3277,7 @@ WLAN_STATUS nicRxProcessActionFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSw
 			return WLAN_STATUS_INVALID_PACKET;
 		}
 	}
-	/* DBGLOG(RSN, TRACE, ("[Rx] pre check done, handle cateory %d\n", prActFrame->ucCategory)); */
+	/* DBGLOG(RSN, INFO, "[Rx] pre check done, handle cateory %d\n", prActFrame->ucCategory); */
 #endif
 
 	if (prSwRfb->prStaRec)
@@ -3261,6 +3343,14 @@ WLAN_STATUS nicRxProcessActionFrame(IN P_ADAPTER_T prAdapter, IN P_SW_RFB_T prSw
 				    prAdapter->rWifiVar.rAisSpecificBssInfo.fgMgmtProtection /* Use MFP */) {
 					/* MFP test plan 5.3.3.4 */
 					rsnSaQueryAction(prAdapter, prSwRfb);
+				} else if ((prBssInfo->eNetworkType == NETWORK_TYPE_P2P) &&
+					(prBssInfo->eCurrentOPMode == OP_MODE_ACCESS_POINT)) {
+					/* AP PMF */
+					DBGLOG(RSN, INFO, "[Rx] nicRx AP PMF SAQ action\n");
+					if (rsnCheckBipKeyInstalled(prAdapter, prSwRfb->prStaRec)) {
+						/* MFP test plan 4.3.3.4 */
+						rsnApSaQueryAction(prAdapter, prSwRfb);
+					}
 				}
 			}
 		}
@@ -3348,11 +3438,11 @@ nicRxGetRcpiValueFromRxv(IN UINT_8 ucRcpiMode, IN P_SW_RFB_T prSwRfb)
 			break;
 
 		case RCPI_MODE_MAX:
-			ucRcpiValue = (ucRcpi0 > ucRcpi1) ? (ucRcpi0):(ucRcpi1);
+			ucRcpiValue = (ucRcpi0 > ucRcpi1) ? (ucRcpi0) : (ucRcpi1);
 			break;
 
 		case RCPI_MODE_MIN:
-			ucRcpiValue = (ucRcpi0 < ucRcpi1) ? (ucRcpi0):(ucRcpi1);
+			ucRcpiValue = (ucRcpi0 < ucRcpi1) ? (ucRcpi0) : (ucRcpi1);
 			break;
 
 		default:

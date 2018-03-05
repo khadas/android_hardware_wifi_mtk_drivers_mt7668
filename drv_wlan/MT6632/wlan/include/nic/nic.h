@@ -98,6 +98,7 @@ typedef struct _ECO_INFO_T {
 	UINT_8 ucHwVer;
 	UINT_8 ucRomVer;
 	UINT_8 ucFactoryVer;
+	UINT_8 ucEcoVer;
 } ECO_INFO_T, *P_ECO_INFO_T;
 
 enum ENUM_INT_EVENT_T {
@@ -132,8 +133,8 @@ typedef enum _ENUM_SER_STATE_T {
 #define TEST_MODE_THROUGHPUT \
 		(TEST_MODE_DISABLE_ONLINE_SCAN | TEST_MODE_DISABLE_ROAMING | \
 		TEST_MODE_FIXED_CAM_MODE | TEST_MODE_DISABLE_BCN_LOST_DET)
-#define TEST_MODE_SIGMA (TEST_MODE_DISABLE_ONLINE_SCAN | TEST_MODE_FIXED_CAM_MODE)
-
+#define TEST_MODE_SIGMA_AC_N_PMF (TEST_MODE_DISABLE_ONLINE_SCAN | TEST_MODE_FIXED_CAM_MODE)
+#define TEST_MODE_SIGMA_WMM_PS (TEST_MODE_DISABLE_ONLINE_SCAN)
 /*******************************************************************************
 *                    E X T E R N A L   R E F E R E N C E S
 ********************************************************************************
@@ -202,8 +203,6 @@ VOID nicSetSwIntr(IN P_ADAPTER_T prAdapter, IN UINT_32 u4SwIntrBitmap);
 P_CMD_INFO_T nicGetPendingCmdInfo(IN P_ADAPTER_T prAdapter, IN UINT_8 ucSeqNum);
 
 P_MSDU_INFO_T nicGetPendingTxMsduInfo(IN P_ADAPTER_T prAdapter, IN UINT_8 ucWlanIndex, IN UINT_8 ucSeqNum);
-
-P_MSDU_INFO_T nicGetPendingStaMMPDU(IN P_ADAPTER_T prAdapter, IN UINT_8 ucStaRecIdx);
 
 VOID nicFreePendingTxMsduInfoByBssIdx(IN P_ADAPTER_T prAdapter, IN UINT_8 ucBssIndex);
 
@@ -279,6 +278,10 @@ VOID nicUninitMGMT(IN P_ADAPTER_T prAdapter);
 
 WLAN_STATUS
 nicConfigPowerSaveProfile(IN P_ADAPTER_T prAdapter, UINT_8 ucBssIndex, PARAM_POWER_MODE ePwrMode, BOOLEAN fgEnCmdEvent);
+
+WLAN_STATUS
+nicConfigPowerSaveWowProfile(IN P_ADAPTER_T prAdapter, UINT_8 ucBssIndex, PARAM_POWER_MODE ePwrMode,
+	BOOLEAN fgEnCmdEvent, BOOLEAN fgSuspend);
 
 WLAN_STATUS nicEnterCtiaMode(IN P_ADAPTER_T prAdapter, BOOLEAN fgEnterCtia, BOOLEAN fgEnCmdEvent);
 WLAN_STATUS nicEnterTPTestMode(IN P_ADAPTER_T prAdapter, IN UINT_8 ucFuncMask);

@@ -139,6 +139,12 @@ static MTK_WCN_HIF_SDIO_CLTINFO cltInfo = {
 };
 
 #else
+/*
+ * function prototypes
+ *
+ */
+static int mtk_sdio_pm_suspend(struct device *pDev);
+static int mtk_sdio_pm_resume(struct device *pDev);
 
 static const struct sdio_device_id mtk_sdio_ids[] = {
 	{	SDIO_DEVICE(0x037a, 0x6602),
@@ -170,21 +176,19 @@ static probe_card pfWlanProbe;
 static remove_card pfWlanRemove;
 
 #if (MTK_WCN_HIF_SDIO == 0)
-struct sdio_func *pSdioFunc = NULL;
-
-static struct dev_pm_ops mtk_sdio_pm_ops = { 
-	.suspend = NULL, 
-	.resume = NULL, 
-}; 
+static const struct dev_pm_ops mtk_sdio_pm_ops = {
+	.suspend = mtk_sdio_pm_suspend,
+	.resume = mtk_sdio_pm_resume,
+};
 
 static struct sdio_driver mtk_sdio_driver = {
 	.name = "wlan",		/* "MTK SDIO WLAN Driver" */
 	.id_table = mtk_sdio_ids,
 	.probe = NULL,
 	.remove = NULL,
-	.drv = { 
-		.owner = THIS_MODULE, 
-		.pm = &mtk_sdio_pm_ops, 
+	.drv = {
+		.owner = THIS_MODULE,
+		.pm = &mtk_sdio_pm_ops,
 	}
 };
 #endif
@@ -193,6 +197,8 @@ static struct sdio_driver mtk_sdio_driver = {
 *                                 M A C R O S
 ********************************************************************************
 */
+#define dev_to_sdio_func(d)	container_of(d, struct sdio_func, dev)
+
 
 /*******************************************************************************
 *                   F U N C T I O N   D E C L A R A T I O N S
@@ -268,8 +274,6 @@ static void mtk_sdio_interrupt(struct sdio_func *func)
 
 	sdio_writeb(prGlueInfo->rHifInfo.func, WHLPCR_INT_EN_CLR, MCR_WHLPCR, &ret);
 
-	prGlueInfo->rHifInfo.fgIsPendingInt = FALSE;
-
 	kalSetIntEvent(prGlueInfo);
 }
 #endif
@@ -330,7 +334,6 @@ static int mtk_sdio_probe(struct sdio_func *func, const struct sdio_device_id *i
 
 	ASSERT(func);
 	ASSERT(id);
-	pSdioFunc = func;
 	/*
 	*printk(KERN_INFO DRV_NAME "Basic struct size checking...\n");
 	*printk(KERN_INFO DRV_NAME "sizeof(struct device) = %d\n", sizeof(struct device));
@@ -404,42 +407,156 @@ static void mtk_sdio_remove(struct sdio_func *func)
 #if (MTK_WCN_HIF_SDIO == 0)
 static int mtk_sdio_pm_suspend(struct device *pDev)
 {
-	int ret = 0;
-	
-	printk("mtk_sdio: %s dev(0x%p)\n", __func__, pDev);
-	
-	ret = sdio_set_host_pm_flags(pSdioFunc, MMC_PM_KEEP_POWER);
-	if (ret) {
-		printk("mtk_sdio: %s sdio_set_host_pm_flags err %d\n", __func__, ret);
-		goto out;
+	int ret = 0, wait = 0;
+	int pm_caps, set_flag;
+	const char *func_id;
+	struct sdio_func *func;
+	P_GLUE_INFO_T prGlueInfo = NULL;
+
+	DBGLOG(HAL, STATE, "==>\n");
+
+	func = dev_to_sdio_func(pDev);
+	prGlueInfo = sdio_get_drvdata(func);
+
+	wlanSuspendPmHandle(prGlueInfo);
+
+	prGlueInfo->prAdapter->fgForceFwOwn = TRUE;
+
+	/* Wait for
+	*  1. The other unfinished ownership handshakes
+	*  2. FW own back
+	*/
+	wait = 0;
+	while (1) {
+		if (prGlueInfo->prAdapter->u4PwrCtrlBlockCnt == 0
+				&& prGlueInfo->prAdapter->fgIsFwOwn == TRUE) {
+			DBGLOG(HAL, STATE, "************************\n");
+			DBGLOG(HAL, STATE, "* Entered SDIO Supsend *\n");
+			DBGLOG(HAL, STATE, "************************\n");
+			DBGLOG(HAL, INFO, "wait = %d\n\n", wait);
+			break;
+		}
+
+		ACQUIRE_POWER_CONTROL_FROM_PM(prGlueInfo->prAdapter);
+		kalMsleep(5);
+		RECLAIM_POWER_CONTROL_TO_PM(prGlueInfo->prAdapter, FALSE);
+
+		if (wait > 200) {
+			DBGLOG(HAL, ERROR, "Timeout !!\n\n");
+			return -EAGAIN;
+		}
+		wait++;
 	}
 
-out:
-	return ret;
+	pm_caps = sdio_get_host_pm_caps(func);
+	func_id = sdio_func_id(func);
+
+	/* Ask kernel keeping SDIO bus power-on */
+	set_flag = MMC_PM_KEEP_POWER;
+	ret = sdio_set_host_pm_flags(func, set_flag);
+	if (ret) {
+		DBGLOG(HAL, ERROR, "set flag %d err %d\n", set_flag, ret);
+		DBGLOG(HAL, ERROR,
+			"%s: cannot remain alive(0x%X)\n", func_id, pm_caps);
+	}
+
+	/* If wow enable, ask kernel accept SDIO IRQ in suspend mode */
+	if (prGlueInfo->prAdapter->rWifiVar.ucWow &&
+		prGlueInfo->prAdapter->rWowCtrl.fgWowEnable) {
+		set_flag = MMC_PM_WAKE_SDIO_IRQ;
+		ret = sdio_set_host_pm_flags(func, set_flag);
+		if (ret) {
+			DBGLOG(HAL, ERROR, "set flag %d err %d\n", set_flag, ret);
+			DBGLOG(HAL, ERROR,
+				"%s: cannot sdio wake-irq(0x%X)\n", func_id, pm_caps);
+		}
+	}
+
+	DBGLOG(HAL, STATE, "<==\n");
+	return 0;
 }
 
 static int mtk_sdio_pm_resume(struct device *pDev)
 {
+	struct sdio_func *func;
 	P_GLUE_INFO_T prGlueInfo = NULL;
 
-	prGlueInfo = sdio_get_drvdata(pSdioFunc);
-	
-	printk("mtk_sdio: %s dev(0x%p)\n", __func__, pDev);
-	
-	wlanAcquirePowerControl(prGlueInfo->prAdapter);
-	
+	DBGLOG(HAL, STATE, "==>\n");
+
+	func = dev_to_sdio_func(pDev);
+	prGlueInfo = sdio_get_drvdata(func);
+
+	prGlueInfo->prAdapter->fgForceFwOwn = FALSE;
+
+	wlanResumePmHandle(prGlueInfo);
+
+	DBGLOG(HAL, STATE, "<==\n");
 	return 0;
 }
 
 static int mtk_sdio_suspend(struct device *pDev, pm_message_t state)
 {
+	/* printk(KERN_INFO "mtk_sdio: mtk_sdio_suspend dev(0x%p)\n", pDev); */
+	/* printk(KERN_INFO "mtk_sdio: MediaTek SDIO WLAN driver\n"); */
+
 	return mtk_sdio_pm_suspend(pDev);
 }
 
-static int mtk_sdio_resume(struct device *pDev)
+int mtk_sdio_resume(struct device *pDev)
 {
+	/* printk(KERN_INFO "mtk_sdio: mtk_sdio_resume dev(0x%p)\n", pDev); */
+
 	return mtk_sdio_pm_resume(pDev);
 }
+#if (CFG_SDIO_ASYNC_IRQ_AUTO_ENABLE == 1)
+int mtk_sdio_async_irq_enable(struct sdio_func *func)
+{
+#define SDIO_CCCR_IRQ_EXT	0x16
+#define SDIO_IRQ_EXT_SAI	BIT(0)
+#define SDIO_IRQ_EXT_EAI	BIT(1)
+	unsigned char data = 0;
+	unsigned int quirks_bak;
+	int ret;
+
+	/* Read CCCR 0x16 (interrupt extension)*/
+	data = sdio_f0_readb(func, SDIO_CCCR_IRQ_EXT, &ret);
+	if (ret) {
+		DBGLOG(HAL, ERROR, "CCCR 0x%X read fail (%d).\n", SDIO_CCCR_IRQ_EXT, ret);
+		return FALSE;
+	}
+	/* Check CCCR capability status */
+	if (!(data & SDIO_IRQ_EXT_SAI)) {
+		/* SAI = 0 */
+		DBGLOG(HAL, ERROR, "No Async-IRQ capability.\n");
+		return FALSE;
+	} else if (data & SDIO_IRQ_EXT_EAI) {
+		/* EAI = 1 */
+		DBGLOG(INIT, INFO, "Async-IRQ enabled already.\n");
+		return TRUE;
+	}
+
+	/* Set EAI bit */
+	data |= SDIO_IRQ_EXT_EAI;
+
+	/* Enable capability to write CCCR */
+	quirks_bak = func->card->quirks;
+	func->card->quirks |= MMC_QUIRK_LENIENT_FN0;
+	/* Write CCCR into card */
+	sdio_f0_writeb(func, data, SDIO_CCCR_IRQ_EXT, &ret);
+	if (ret) {
+		DBGLOG(HAL, ERROR, "CCCR 0x%X write fail (%d).\n", SDIO_CCCR_IRQ_EXT, ret);
+		return FALSE;
+	}
+	func->card->quirks = quirks_bak;
+
+	data = sdio_f0_readb(func, SDIO_CCCR_IRQ_EXT, &ret);
+	if (ret || !(data & SDIO_IRQ_EXT_EAI)) {
+		DBGLOG(HAL, ERROR, "CCCR 0x%X write fail (%d).\n", SDIO_CCCR_IRQ_EXT, ret);
+		return FALSE;
+	}
+	return TRUE;
+}
+#endif
 #endif
 
 /*----------------------------------------------------------------------------*/
@@ -476,10 +593,6 @@ WLAN_STATUS glRegisterBus(probe_card pfProbe, remove_card pfRemove)
 
 	mtk_sdio_driver.drv.suspend = mtk_sdio_suspend;
 	mtk_sdio_driver.drv.resume = mtk_sdio_resume;
-
-	mtk_sdio_pm_ops.suspend = mtk_sdio_pm_suspend;
-	mtk_sdio_pm_ops.resume = mtk_sdio_pm_resume;
-
 
 	ret = (sdio_register_driver(&mtk_sdio_driver) == 0) ? WLAN_STATUS_SUCCESS : WLAN_STATUS_FAILURE;
 #endif
@@ -605,6 +718,14 @@ BOOL glBusInit(PVOID pvData)
 		DBGLOG(HAL, ERROR, "glBusInit() Error at enabling SDIO 1-BIT data mode.\n");
 	else
 		DBGLOG(HAL, INFO, "glBusInit() SDIO 1-BIT data mode is working.\n");
+#endif
+
+#if (CFG_SDIO_ASYNC_IRQ_AUTO_ENABLE == 1)
+	ret = mtk_sdio_async_irq_enable(func);
+	if (ret == FALSE)
+		DBGLOG(HAL, ERROR, "Async-IRQ auto-enable fail.\n");
+	else
+		DBGLOG(INIT, INFO, "Async-IRQ is enabled.\n");
 #endif
 
 	ret = sdio_set_block_size(func, 512);

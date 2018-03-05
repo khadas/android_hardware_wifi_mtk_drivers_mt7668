@@ -202,6 +202,7 @@
 #include "p2p_func.h"
 #include "p2p_scan.h"
 #include "p2p_dev.h"
+#include "p2p_fsm.h"
 #endif
 
 #include "privacy.h"
@@ -244,6 +245,14 @@
 
 #if CFG_SUPPORT_QA_TOOL
 #include "gl_qa_agent.h"
+#endif
+
+/*------------------------------------------------------------------------------
+ * Memory Prealloc
+ *------------------------------------------------------------------------------
+ */
+#ifdef CFG_PREALLOC_MEMORY
+#include "prealloc.h"
 #endif
 
 /*******************************************************************************

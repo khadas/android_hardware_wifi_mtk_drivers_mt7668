@@ -93,6 +93,14 @@
 #define CFG_TX_STOP_NETIF_PER_QUEUE_THRESHOLD   512	/* packets */
 #define CFG_TX_START_NETIF_PER_QUEUE_THRESHOLD  128	/* packets */
 
+/* WMM Certification Related */
+#define CFG_CERT_WMM_MAX_TX_PENDING			20
+#define CFG_CERT_WMM_MAX_RX_NUM				10
+#define CFG_CERT_WMM_HIGH_STOP_TX_WITH_RX	(CFG_TX_STOP_NETIF_PER_QUEUE_THRESHOLD * 3)
+#define CFG_CERT_WMM_HIGH_STOP_TX_WO_RX		(CFG_TX_STOP_NETIF_PER_QUEUE_THRESHOLD * 2)
+#define CFG_CERT_WMM_LOW_STOP_TX_WITH_RX	(CFG_TX_STOP_NETIF_PER_QUEUE_THRESHOLD >> 4)
+#define CFG_CERT_WMM_LOW_STOP_TX_WO_RX		(CFG_TX_STOP_NETIF_PER_QUEUE_THRESHOLD >> 3)
+
 #define CHIP_NAME    "MT6632"
 
 #define DRV_NAME "["CHIP_NAME"]: "
@@ -120,7 +128,7 @@
 #include <linux/jiffies.h>	/* jiffies */
 #include <linux/delay.h>	/* udelay and mdelay macro */
 
-#ifdef CONFIG_ANDROID
+#ifdef CONFIG_HAS_WAKELOCK
 #include <linux/wakelock.h>
 #endif
 
@@ -151,6 +159,9 @@
 #include <linux/cdev.h>		/* for cdev interface */
 
 #include <linux/firmware.h>	/* for firmware download */
+#include <linux/ctype.h>
+
+#include <linux/interrupt.h>
 
 #if defined(_HIF_USB)
 #include <linux/usb.h>
@@ -160,7 +171,6 @@
 
 #if defined(_HIF_PCIE)
 #include <linux/pci.h>
-#include <linux/interrupt.h>
 #endif
 
 #if defined(_HIF_SDIO)
@@ -176,6 +186,14 @@
 #include <net/iw_handler.h>
 #endif
 
+#include <linux/math64.h>
+
+#ifdef CFG_CFG80211_VERSION
+#define CFG80211_VERSION_CODE CFG_CFG80211_VERSION
+#else
+#define CFG80211_VERSION_CODE LINUX_VERSION_CODE
+#endif
+
 #include "version.h"
 #include "config.h"
 
@@ -188,7 +206,7 @@
 #include <linux/can/netlink.h>
 #include <net/netlink.h>
 
-#ifdef CONFIG_IPV6
+#if IS_ENABLED(CONFIG_IPV6)
 #include <linux/ipv6.h>
 #include <linux/in6.h>
 #include <net/if_inet6.h>
@@ -198,7 +216,7 @@
 #include <net/addrconf.h>
 #endif /* CFG_SUPPORT_PASSPOINT */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+#if KERNEL_VERSION(3, 8, 0) <= CFG80211_VERSION_CODE
 #include <uapi/linux/nl80211.h>
 #endif
 
@@ -297,7 +315,27 @@ typedef struct _GL_WPA_INFO_T {
 	UINT_32 u4Mfp;
 	UINT_8 ucRSNMfpCap;
 #endif
+	UINT_8 aucKek[NL80211_KEK_LEN];
+	UINT_8 aucKck[NL80211_KCK_LEN];
+	UINT_8 aucReplayCtr[NL80211_REPLAY_CTR_LEN];
 } GL_WPA_INFO_T, *P_GL_WPA_INFO_T;
+
+#if CFG_SUPPORT_REPLAY_DETECTION
+struct SEC_REPLEY_PN_INFO {
+	UINT_8 auPN[16];
+	BOOLEAN fgRekey;
+	BOOLEAN fgFirstPkt;
+};
+struct SEC_DETECT_REPLAY_INFO {
+	UINT_8 ucCurKeyId;
+	UINT_8 ucKeyType;
+	struct SEC_REPLEY_PN_INFO arReplayPNInfo[4];
+	UINT_32 u4KeyLength;
+	UINT_8 aucKeyMaterial[32];
+	BOOLEAN fgPairwiseInstalled;
+	BOOLEAN fgKeyRscFresh;
+};
+#endif
 
 typedef enum _ENUM_NET_DEV_IDX_T {
 	NET_DEV_WLAN_IDX = 0,
@@ -348,6 +386,7 @@ typedef struct _GL_IO_REQ_T {
 	PUINT_32 pu4QryInfoLen;
 	WLAN_STATUS rStatus;
 	UINT_32 u4Flag;
+	UINT_32 u4Timeout;
 } GL_IO_REQ_T, *P_GL_IO_REQ_T;
 
 #if CFG_ENABLE_BT_OVER_WIFI
@@ -497,6 +536,8 @@ struct _GLUE_INFO_T {
 	struct task_struct *rx_thread;
 
 #endif
+	struct tasklet_struct rRxTask;
+	struct tasklet_struct rTxCompleteTask;
 
 	struct work_struct rTxMsduFreeWork;
 	struct delayed_work rRxPktDeAggWork;
@@ -580,8 +621,10 @@ struct _GLUE_INFO_T {
 	UINT_8 aucDADipv6[16];
 #endif				/* CFG_SUPPORT_PASSPOINT */
 
+#if defined(CONFIG_ANDROID) && (CFG_ENABLE_WAKE_LOCK)
 	KAL_WAKE_LOCK_T rIntrWakeLock;
 	KAL_WAKE_LOCK_T rTimeoutWakeLock;
+#endif
 
 #if CFG_MET_PACKET_TRACE_SUPPORT
 	BOOLEAN fgMetProfilingEn;
@@ -874,6 +917,39 @@ static __KAL_INLINE__ VOID glPacketDataTypeCheck(VOID)
 	DATA_STRUCT_INSPECTING_ASSERT(sizeof(PACKET_PRIVATE_DATA) <= sizeof(((struct sk_buff *) 0)->cb));
 }
 
+static inline u16 mtk_wlan_ndev_select_queue(struct sk_buff *skb)
+{
+	static u16 ieee8021d_to_queue[8] = { 1, 0, 0, 1, 2, 2, 3, 3 };
+
+	/* cfg80211_classify8021d returns 0~7 */
+#if KERNEL_VERSION(3, 14, 0) > CFG80211_VERSION_CODE
+	skb->priority = cfg80211_classify8021d(skb);
+#else
+	skb->priority = cfg80211_classify8021d(skb, NULL);
+#endif
+	return ieee8021d_to_queue[skb->priority];
+}
+
+#if KERNEL_VERSION(2, 6, 34) > LINUX_VERSION_CODE
+#define netdev_for_each_mc_addr(mclist, dev) \
+	for (mclist = dev->mc_list; mclist; mclist = mclist->next)
+#endif
+
+#if KERNEL_VERSION(2, 6, 34) > LINUX_VERSION_CODE
+#define GET_ADDR(ha) (ha->da_addr)
+#else
+#define GET_ADDR(ha) (ha->addr)
+#endif
+
+#if KERNEL_VERSION(2, 6, 35) <= LINUX_VERSION_CODE
+#define LIST_FOR_EACH_IPV6_ADDR(_prIfa, _ip6_ptr) \
+	list_for_each_entry(_prIfa, &((struct inet6_dev *) _ip6_ptr)->addr_list, if_list)
+#else
+#define LIST_FOR_EACH_IPV6_ADDR(_prIfa, _ip6_ptr) \
+	for (_prIfa = ((struct inet6_dev *) _ip6_ptr)->addr_list; _prIfa; _prIfa = _prIfa->if_next)
+#endif
+
+
 /*******************************************************************************
 *                  F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
@@ -903,11 +979,14 @@ void p2pSetMulticastListWorkQueueWrapper(P_GLUE_INFO_T prGlueInfo);
 
 P_GLUE_INFO_T wlanGetGlueInfo(VOID);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 13, 0)
-UINT_16 wlanSelectQueue(struct net_device *dev, struct sk_buff *skb,
-			void *accel_priv, select_queue_fallback_t fallback);
+#if KERNEL_VERSION(3, 14, 0) <= LINUX_VERSION_CODE
+u16 wlanSelectQueue(struct net_device *dev, struct sk_buff *skb,
+		    void *accel_priv, select_queue_fallback_t fallback);
+#elif KERNEL_VERSION(3, 13, 0) <= LINUX_VERSION_CODE
+u16 wlanSelectQueue(struct net_device *dev, struct sk_buff *skb,
+		    void *accel_priv);
 #else
-UINT_16 wlanSelectQueue(struct net_device *dev, struct sk_buff *skb);
+u16 wlanSelectQueue(struct net_device *dev, struct sk_buff *skb);
 #endif
 
 VOID wlanDebugInit(VOID);
@@ -919,6 +998,8 @@ WLAN_STATUS wlanGetDebugLevel(IN UINT_32 u4DbgIdx, OUT PUINT_32 pu4DbgMask);
 VOID wlanSetSuspendMode(P_GLUE_INFO_T prGlueInfo, BOOLEAN fgEnable);
 
 VOID wlanGetConfig(P_ADAPTER_T prAdapter);
+
+WLAN_STATUS wlanExtractBufferBin(P_ADAPTER_T prAdapter);
 
 /*******************************************************************************
 *			 E X T E R N A L   F U N C T I O N S / V A R I A B L E

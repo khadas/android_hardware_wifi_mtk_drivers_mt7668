@@ -204,6 +204,10 @@ typedef enum _ENUM_SPIN_LOCK_CATEGORY_E {
 	SPIN_LOCK_TXS_COUNT,
 	/* end    */
 	SPIN_LOCK_TX,
+	/* TX/RX Direct : BEGIN */
+	SPIN_LOCK_TX_DIRECT,
+	SPIN_LOCK_RX_DIRECT,
+	/* TX/RX Direct : END */
 	SPIN_LOCK_IO_REQ,
 	SPIN_LOCK_INT,
 
@@ -225,6 +229,7 @@ typedef enum _ENUM_MUTEX_CATEGORY_E {
 	MUTEX_TX_CMD_CLEAR,
 	MUTEX_TX_DATA_DONE_QUE,
 	MUTEX_DEL_INF,
+	MUTEX_CHIP_RST,
 	MUTEX_NUM
 } ENUM_MUTEX_CATEGORY_E;
 
@@ -426,6 +431,103 @@ typedef struct _MONITOR_RADIOTAP_T {
 #define KAL_GET_PKT_ARRIVAL_TIME(_p)            GLUE_GET_PKT_ARRIVAL_TIME(_p)
 
 /*----------------------------------------------------------------------------*/
+/* Macros for kernel related defines                      */
+/*----------------------------------------------------------------------------*/
+#if KERNEL_VERSION(3, 14, 0) > CFG80211_VERSION_CODE
+#define IEEE80211_CHAN_PASSIVE_FLAG	IEEE80211_CHAN_PASSIVE_SCAN
+#define IEEE80211_CHAN_PASSIVE_STR		"PASSIVE"
+#else
+#define IEEE80211_CHAN_PASSIVE_FLAG	IEEE80211_CHAN_NO_IR
+#define IEEE80211_CHAN_PASSIVE_STR		"NO_IR"
+#endif
+
+#if KERNEL_VERSION(4, 7, 0) <= CFG80211_VERSION_CODE
+/**
+ * enum nl80211_band - Frequency band
+ * @NL80211_BAND_2GHZ: 2.4 GHz ISM band
+ * @NL80211_BAND_5GHZ: around 5 GHz band (4.9 - 5.7 GHz)
+ * @NL80211_BAND_60GHZ: around 60 GHz band (58.32 - 64.80 GHz)
+ * @NUM_NL80211_BANDS: number of bands, avoid using this in userspace
+ *	 since newer kernel versions may support more bands
+ */
+#define KAL_BAND_2GHZ NL80211_BAND_2GHZ
+#define KAL_BAND_5GHZ NL80211_BAND_5GHZ
+#define KAL_NUM_BANDS NUM_NL80211_BANDS
+#else
+#define KAL_BAND_2GHZ IEEE80211_BAND_2GHZ
+#define KAL_BAND_5GHZ IEEE80211_BAND_5GHZ
+#define KAL_NUM_BANDS IEEE80211_NUM_BANDS
+#endif
+
+/**
+ * enum nl80211_reg_rule_flags - regulatory rule flags
+ * @NL80211_RRF_NO_OFDM: OFDM modulation not allowed
+ * @NL80211_RRF_AUTO_BW: maximum available bandwidth should be calculated
+ *  base on contiguous rules and wider channels will be allowed to cross
+ *  multiple contiguous/overlapping frequency ranges.
+ * @NL80211_RRF_DFS: DFS support is required to be used
+ */
+#define KAL_RRF_NO_OFDM NL80211_RRF_NO_OFDM
+#define KAL_RRF_DFS     NL80211_RRF_DFS
+#if KERNEL_VERSION(3, 15, 0) > CFG80211_VERSION_CODE
+#define KAL_RRF_AUTO_BW 0
+#else
+#define KAL_RRF_AUTO_BW NL80211_RRF_AUTO_BW
+#endif
+
+/**
+ * kalCfg80211ToMtkBand - Band translation helper
+ *
+ * @band: cfg80211_band
+ *
+ * Translates cfg80211 band into internal band definition
+ */
+#if CFG_SCAN_CHANNEL_SPECIFIED
+#define kalCfg80211ToMtkBand(cfg80211_band) \
+	(cfg80211_band == KAL_BAND_2GHZ ? BAND_2G4 : \
+	 cfg80211_band == KAL_BAND_5GHZ ? BAND_5G : BAND_NULL)
+#endif
+
+/**
+ * kalCfg80211ScanDone - abstraction of cfg80211_scan_done
+ *
+ * @request: the corresponding scan request (sanity checked by callers!)
+ * @aborted: set to true if the scan was aborted for any reason,
+ *	userspace will be notified of that
+ *
+ * Since linux-4.8.y the 2nd parameter is changed from bool to
+ * struct cfg80211_scan_info, but we don't use all fields yet.
+ */
+#if KERNEL_VERSION(4, 8, 0) <= CFG80211_VERSION_CODE
+static inline void kalCfg80211ScanDone(struct cfg80211_scan_request *request,
+				       bool aborted)
+{
+	struct cfg80211_scan_info info = { .aborted = aborted };
+
+	cfg80211_scan_done(request, &info);
+}
+#else
+static inline void kalCfg80211ScanDone(struct cfg80211_scan_request *request,
+				       bool aborted)
+{
+	cfg80211_scan_done(request, aborted);
+}
+#endif
+
+/* Consider on some Android platform, using request_firmware_direct()
+ * may cause system failed to load firmware. So we still use
+ * request_firmware().
+ */
+#define REQUEST_FIRMWARE(_fw, _name, _dev) \
+	request_firmware(_fw, _name, _dev)
+
+#define RELEASE_FIRMWARE(_fw) \
+	do { \
+		release_firmware(_fw); \
+		_fw = NULL; \
+	} while (0)
+
+/*----------------------------------------------------------------------------*/
 /* Macros of wake_lock operations for using in Driver Layer                   */
 /*----------------------------------------------------------------------------*/
 #if defined(CONFIG_ANDROID) && (CFG_ENABLE_WAKE_LOCK)
@@ -472,7 +574,10 @@ typedef struct _MONITOR_RADIOTAP_T {
 #define kalMemAlloc(u4Size, eMemType) ({    \
 	void *pvAddr; \
 	if (eMemType == PHY_MEM_TYPE) { \
-		pvAddr = kmalloc(u4Size, GFP_KERNEL);   \
+		if (in_interrupt()) \
+			pvAddr = kmalloc(u4Size, GFP_ATOMIC);   \
+		else \
+			pvAddr = kmalloc(u4Size, GFP_KERNEL);   \
 	} \
 	else { \
 		pvAddr = vmalloc(u4Size);   \
@@ -488,7 +593,10 @@ typedef struct _MONITOR_RADIOTAP_T {
 #define kalMemAlloc(u4Size, eMemType) ({    \
 	void *pvAddr; \
 	if (eMemType == PHY_MEM_TYPE) { \
-		pvAddr = kmalloc(u4Size, GFP_KERNEL);   \
+		if (in_interrupt()) \
+			pvAddr = kmalloc(u4Size, GFP_ATOMIC);   \
+		else \
+			pvAddr = kmalloc(u4Size, GFP_KERNEL);   \
 	} \
 	else { \
 		pvAddr = vmalloc(u4Size);   \
@@ -560,7 +668,10 @@ typedef struct _MONITOR_RADIOTAP_T {
 /* Zero specific memory block */
 #define kalMemZero(pvAddr, u4Size)                  memset(pvAddr, 0, u4Size)
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 4, 0)
+/* Move memory block with specific size */
+#define kalMemMove(pvDst, pvSrc, u4Size)            memmove(pvDst, pvSrc, u4Size)
+
+#if KERNEL_VERSION(4, 0, 0) <= LINUX_VERSION_CODE
 #define strnicmp(s1, s2, n)                         strncasecmp(s1, s2, n)
 #endif
 
@@ -578,15 +689,18 @@ typedef struct _MONITOR_RADIOTAP_T {
 /* #define kalStrtoul(cp, endp, base)               simple_strtoul(cp, endp, base) */
 /* #define kalStrtol(cp, endp, base)                simple_strtol(cp, endp, base) */
 #define kalkStrtou8(cp, base, resp)                 kstrtou8(cp, base, resp)
+#define kalkStrtou16(cp, base, resp)                kstrtou16(cp, base, resp)
 #define kalkStrtou32(cp, base, resp)                kstrtou32(cp, base, resp)
 #define kalkStrtos32(cp, base, resp)                kstrtos32(cp, base, resp)
 #define kalSnprintf(buf, size, fmt, ...)            snprintf(buf, size, fmt, ##__VA_ARGS__)
+#define kalScnprintf(buf, size, fmt, ...)           scnprintf(buf, size, fmt, ##__VA_ARGS__)
 #define kalSprintf(buf, fmt, ...)                   sprintf(buf, fmt, __VA_ARGS__)
 /* remove for AOSP */
-/* #define kalSScanf(buf, fmt, ...)                      sscanf(buf, fmt, __VA_ARGS__) */
+/* #define kalSScanf(buf, fmt, ...)                    sscanf(buf, fmt, __VA_ARGS__) */
 #define kalStrStr(ct, cs)                           strstr(ct, cs)
 #define kalStrSep(s, ct)                            strsep(s, ct)
 #define kalStrCat(dest, src)                        strcat(dest, src)
+#define kalIsXdigit(c)                              isxdigit(c)
 
 /* defined for wince sdio driver only */
 #if defined(_HIF_SDIO)
@@ -694,6 +808,8 @@ do { \
 		(_Interval) += KAL_GET_TIME_INTERVAL(); \
 	}
 
+#define KAL_GET_HOST_CLOCK()		local_clock()
+
 /*******************************************************************************
 *                  F U N C T I O N   D E C L A R A T I O N S
 ********************************************************************************
@@ -714,8 +830,6 @@ VOID kalReleaseMutex(IN P_GLUE_INFO_T prGlueInfo, IN ENUM_MUTEX_CATEGORY_E rMute
 VOID kalPacketFree(IN P_GLUE_INFO_T prGlueInfo, IN PVOID pvPacket);
 
 PVOID kalPacketAlloc(IN P_GLUE_INFO_T prGlueInfo, IN UINT_32 u4Size, OUT PUINT_8 *ppucData);
-
-PVOID kalPacketAllocWithHeadroom(IN P_GLUE_INFO_T prGlueInfo, IN UINT_32 u4Size, OUT PUINT_8 *ppucData);
 
 VOID kalOsTimerInitialize(IN P_GLUE_INFO_T prGlueInfo, IN PVOID prTimerHandler);
 
@@ -814,9 +928,22 @@ kalIoctl(IN P_GLUE_INFO_T prGlueInfo,
 	 IN PVOID pvInfoBuf,
 	 IN UINT_32 u4InfoBufLen, IN BOOL fgRead, IN BOOL fgWaitResp, IN BOOL fgCmd, OUT PUINT_32 pu4QryInfoLen);
 
+WLAN_STATUS
+kalIoctlTimeout(IN P_GLUE_INFO_T prGlueInfo,
+	 IN PFN_OID_HANDLER_FUNC pfnOidHandler,
+	 IN PVOID pvInfoBuf,
+	 IN UINT_32 u4InfoBufLen, IN BOOL fgRead, IN BOOL fgWaitResp, IN BOOL fgCmd, IN INT_32 i4OidTimeout,
+	 OUT PUINT_32 pu4QryInfoLen);
+
 VOID kalHandleAssocInfo(IN P_GLUE_INFO_T prGlueInfo, IN P_EVENT_ASSOC_INFO prAssocInfo);
 
 #if CFG_ENABLE_FW_DOWNLOAD
+WLAN_STATUS kalFirmwareOpen(IN P_GLUE_INFO_T prGlueInfo, IN PPUINT_8 apucNameTable);
+WLAN_STATUS kalFirmwareClose(IN P_GLUE_INFO_T prGlueInfo);
+WLAN_STATUS kalFirmwareLoad(IN P_GLUE_INFO_T prGlueInfo, OUT PVOID prBuf, IN UINT_32 u4Offset, OUT PUINT_32 pu4Size);
+WLAN_STATUS kalFirmwareSize(IN P_GLUE_INFO_T prGlueInfo, OUT PUINT_32 pu4Size);
+VOID kalConstructDefaultFirmwarePrio(P_GLUE_INFO_T prGlueInfo, PPUINT_8 apucNameTable,
+	PPUINT_8 apucName, PUINT_8 pucNameIdx, UINT_8 ucMaxNameIdx);
 PVOID kalFirmwareImageMapping(IN P_GLUE_INFO_T prGlueInfo,
 			      OUT PPVOID ppvMapFileBuf, OUT PUINT_32 pu4FileLength, IN ENUM_IMG_DL_IDX_T eDlIdx);
 VOID kalFirmwareImageUnmapping(IN P_GLUE_INFO_T prGlueInfo, IN PVOID prFwHandle, IN PVOID pvMapFileBuf);
@@ -953,7 +1080,7 @@ kalUpdateRSSI(IN P_GLUE_INFO_T prGlueInfo,
 /*----------------------------------------------------------------------------*/
 /* I/O Buffer Pre-allocation                                                  */
 /*----------------------------------------------------------------------------*/
-BOOLEAN kalInitIOBuffer(VOID);
+BOOLEAN kalInitIOBuffer(BOOLEAN is_pre_alloc);
 
 VOID kalUninitIOBuffer(VOID);
 
@@ -1011,9 +1138,19 @@ BOOLEAN
 kalGetIPv4Address(IN struct net_device *prDev,
 		  IN UINT_32 u4MaxNumOfAddr, OUT PUINT_8 pucIpv4Addrs, OUT PUINT_32 pu4NumOfIpv4Addr);
 
+#if IS_ENABLED(CONFIG_IPV6)
 BOOLEAN
 kalGetIPv6Address(IN struct net_device *prDev,
 		  IN UINT_32 u4MaxNumOfAddr, OUT PUINT_8 pucIpv6Addrs, OUT PUINT_32 pu4NumOfIpv6Addr);
+#else
+static inline BOOLEAN
+kalGetIPv6Address(IN struct net_device *prDev,
+		  IN UINT_32 u4MaxNumOfAddr, OUT PUINT_8 pucIpv6Addrs, OUT PUINT_32 pu4NumOfIpv6Addr) {
+	/* Not support IPv6 */
+	*pu4NumOfIpv6Addr = 0;
+	return FALSE;
+}
+#endif /* IS_ENABLED(CONFIG_IPV6) */
 
 VOID kalSetNetAddressFromInterface(IN P_GLUE_INFO_T prGlueInfo, IN struct net_device *prDev, IN BOOLEAN fgSet);
 
@@ -1090,6 +1227,7 @@ WLAN_STATUS kalCloseCorDumpFile(BOOLEAN fgIsN9);
 */
 
 #if CFG_WOW_SUPPORT
+VOID kalWowInit(IN P_GLUE_INFO_T prGlueInfo);
 VOID kalWowProcess(IN P_GLUE_INFO_T prGlueInfo, UINT_8 enable);
 #endif
 
@@ -1103,8 +1241,29 @@ UINT_64 kalGetBootTime(VOID);
 
 int kalMetInitProcfs(IN P_GLUE_INFO_T prGlueInfo);
 int kalMetRemoveProcfs(void);
-#endif /* _GL_KAL_H */
 
 VOID kalFreeTxMsduWorker(struct work_struct *work);
 VOID kalFreeTxMsdu(P_ADAPTER_T prAdapter, P_MSDU_INFO_T prMsduInfo);
 
+#if KERNEL_VERSION(3, 0, 0) <= LINUX_VERSION_CODE
+/* since: 0b5c9db1b11d3175bb42b80663a9f072f801edf5 */
+static inline void kal_skb_reset_mac_len(struct sk_buff *skb)
+{
+	skb_reset_mac_len(skb);
+}
+#else
+static inline void kal_skb_reset_mac_len(struct sk_buff *skb)
+{
+	skb->mac_len = skb->network_header - skb->mac_header;
+}
+#endif
+
+static inline UINT_64 kalDivU64(UINT_64 dividend, UINT_32 divisor)
+{
+	return div_u64(dividend, divisor);
+}
+
+VOID kalInitDevWakeup(P_ADAPTER_T prAdapter, struct device *prDev);
+
+
+#endif /* _GL_KAL_H */
