@@ -10963,7 +10963,7 @@ INT_32 priv_driver_cmds(IN struct net_device *prNetDev, IN PCHAR pcCommand, IN I
 			kalIoctl(prGlueInfo,
 				 wlanoidSetBatchScanReq,
 				 (PVOID) pcCommand, i4TotalLen, FALSE, FALSE, TRUE, &i4BytesWritten);
-		} else if (strnicmp(pcCommand, CMD_BATCH_GET, strlen(CMD_BATCH_GET)) == 0) {
+		} else if ( strnicmp(pcCommand, CMD_BATCH_GET, strlen(CMD_BATCH_GET)) == 0) {
 			/* strcpy(pcCommand, "BATCH SCAN DATA FROM FIRMWARE"); */
 			/* i4BytesWritten = strlen("BATCH SCAN DATA FROM FIRMWARE") + 1; */
 			/* i4BytesWritten = priv_driver_get_linkspeed (prNetDev, pcCommand, i4TotalLen); */
@@ -11198,6 +11198,16 @@ int android_private_support_driver_cmd(IN struct net_device *prNetDev,
 	}
 
 	bytes_written = priv_driver_cmds(prNetDev, command, priv_cmd.total_len);
+
+	if (bytes_written == -EOPNOTSUPP) {
+          INT_32 i4BytesWritten = 0;
+                                
+          i4BytesWritten += kalSnprintf(command + i4BytesWritten, priv_cmd.total_len - i4BytesWritten,
+                                                                                                "%s", "OK");
+                                command[i4BytesWritten] = '\0';
+                                bytes_written = i4BytesWritten;
+                }
+
 
 	if (bytes_written >= 0) {
 		/* priv_cmd in but no response */

@@ -2118,6 +2118,10 @@ BOOLEAN nicTxFillMsduInfo(IN P_ADAPTER_T prAdapter, IN P_MSDU_INFO_T prMsduInfo,
 
 			/* Set higher priority */
 			prMsduInfo->ucUserPriority = NIC_TX_CRITICAL_DATA_TID;
+			
+			if(GLUE_TEST_PKT_FLAG(prPacket,ENUM_PKT_DHCP)){
+				prMsduInfo->ucRateMode = MSDU_RATE_MODE_AUTO;
+			}
 		}
 	}
 

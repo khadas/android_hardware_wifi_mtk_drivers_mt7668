@@ -6866,6 +6866,11 @@ VOID wlanInitFeatureOption(IN P_ADAPTER_T prAdapter)
 	/* ucTpTestMode == 3, for sigma WMM PS */
 	prWifiVar->ucTpTestMode = (UINT_8) wlanCfgGetUint32(prAdapter, "TpTestMode", 0);
 
+	/* Performance mode configuration */
+	/* 0 - Do nothing. 1 - Enable */
+	/* Bit 0 - Clone VI to BE. */
+	prWifiVar->u4PerfMode =	(UINT_8) wlanCfgGetUint32(prAdapter, "PerfMode", 0);
+
 #if 0
 	prWifiVar->ucSigmaTestMode = (UINT_8) wlanCfgGetUint32(prAdapter, "SigmaTestMode", 0);
 #endif

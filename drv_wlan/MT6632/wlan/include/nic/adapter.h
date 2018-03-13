@@ -798,6 +798,7 @@ typedef struct _WIFI_VAR_T {
 
 	UINT_8 ucCtiaMode;
 	UINT_8 ucTpTestMode;
+	UINT_32 u4PerfMode;
 	UINT_8 ucSigmaTestMode;
 #if CFG_SUPPORT_DBDC
 	UINT_8 ucDbdcMode;

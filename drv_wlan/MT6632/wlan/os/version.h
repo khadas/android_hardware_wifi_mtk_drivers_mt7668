@@ -97,12 +97,9 @@
 #define NIC_DRIVER_NAME                 "MediaTek Inc. Wireless LAN Adapter Driver"
 
 /* Define our driver version */
-#define NIC_DRIVER_MAJOR_VERSION        1
-#define NIC_DRIVER_MINOR_VERSION        1
+#define NIC_DRIVER_MAJOR_VERSION        2
+#define NIC_DRIVER_MINOR_VERSION        0
 #define NIC_DRIVER_SERIAL_VERSION       0
-#define NIC_DRIVER_VERSION              (NIC_DRIVER_MAJOR_VERSION, \
-					 NIC_DRIVER_MINOR_VERSION, \
-					 NIC_DRIVER_SERIAL_VERSION)
 
 #define STR(s)                          #s
 #define XSTR(x)                         STR(x)

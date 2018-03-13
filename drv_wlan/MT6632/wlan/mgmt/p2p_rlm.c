@@ -421,6 +421,7 @@ VOID rlmHandleObssStatusEventPkt(P_ADAPTER_T prAdapter, P_EVENT_AP_OBSS_STATUS_T
 
 	ASSERT(prAdapter);
 	ASSERT(prObssStatus);
+	DBGLOG(INIT, ERROR, "ZMD:prObssStatus->ucBssIndex =%d\n",prObssStatus->ucBssIndex );
 	ASSERT(prObssStatus->ucBssIndex < MAX_BSS_INDEX);
 
 	prBssInfo = GET_BSS_INFO_BY_INDEX(prAdapter, prObssStatus->ucBssIndex);

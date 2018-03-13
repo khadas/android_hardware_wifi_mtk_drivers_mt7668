@@ -1570,6 +1570,13 @@ VOID nicRxProcessEventPacket(IN P_ADAPTER_T prAdapter, IN OUT P_SW_RFB_T prSwRfb
 		DBGLOG(NIC, INFO, "RX EVENT: ID[0x%02X] SEQ[%u] LEN[%u]\n",
 			prEvent->ucEID, prEvent->ucSeqNum, prEvent->u2PacketLength);
 	}
+	if (prEvent->u2PacketLength == 32768) {
+                                DBGLOG(NIC, ERROR, "=============== Invalid len. Force return\n");
+                                DBGLOG(NIC, ERROR, "RX EVENT: ID[0x%02X] SEQ[%u] LEN[%u]\n",
+                                                prEvent->ucEID, prEvent->ucSeqNum, prEvent->u2PacketLength);
+                                nicRxReturnRFB(prAdapter, prSwRfb);
+                                return;
+                }
 
 	/* Event handler table */
 	u4Size = sizeof(arEventTable) / sizeof(RX_EVENT_HANDLER_T);

@@ -2820,6 +2820,8 @@ VOID nicEventMicErrorInfo(IN P_ADAPTER_T prAdapter, IN P_WIFI_EVENT_T prEvent)
 	prMicError = (P_EVENT_MIC_ERR_INFO) (prEvent->aucBuffer);
 	prStaRec = cnmGetStaRecByAddress(prAdapter, prAdapter->prAisBssInfo->ucBssIndex,
 					prAdapter->rWlanInfo.rCurrBssId.arMacAddress);
+	DBGLOG(RSN, ERROR, "ZMD:prAdapter->prAisBssInfo->ucBssIndex=%d\n",prAdapter->prAisBssInfo->ucBssIndex);
+
 	ASSERT(prStaRec);
 
 	if (prStaRec)

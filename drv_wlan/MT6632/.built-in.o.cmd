@@ -1,0 +1,1 @@
+cmd_/mnt/nfsroot/rongjun.chen/android8.1/hardware/wifi/mtk/drivers/mt7668/drv_wlan/MT6632/built-in.o :=  rm -f /mnt/nfsroot/rongjun.chen/android8.1/hardware/wifi/mtk/drivers/mt7668/drv_wlan/MT6632/built-in.o; aarch64-linux-gnu-ar rcsD /mnt/nfsroot/rongjun.chen/android8.1/hardware/wifi/mtk/drivers/mt7668/drv_wlan/MT6632/built-in.o
