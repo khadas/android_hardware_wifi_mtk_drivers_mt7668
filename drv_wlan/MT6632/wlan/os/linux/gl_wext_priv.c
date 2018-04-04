@@ -454,41 +454,76 @@ int priv_support_ioctl(IN struct net_device *prNetDev, IN OUT struct ifreq *prIf
 	/* prIfReq is verified in the caller function wlanDoIOCTL() */
 	struct iwreq *prIwReq = (struct iwreq *)prIfReq;
 	struct iw_request_info rIwReqInfo;
-
+	int err = 0;
 	/* prNetDev is verified in the caller function wlanDoIOCTL() */
 
 	/* Prepare the call */
-	rIwReqInfo.cmd = (__u16) i4Cmd;
-	rIwReqInfo.flags = 0;
+#ifdef CONFIG_COMPAT 
 
+		struct compat_iw_point *iwp_compat;
+                union iwreq_data wrq_data;
+                iwp_compat = (struct compat_iw_point *) &prIwReq->u.data;
+                wrq_data.data.pointer = compat_ptr(iwp_compat->pointer);
+                wrq_data.data.length = iwp_compat->length;
+                wrq_data.data.flags = iwp_compat->flags;
+#endif /* CONFIG_COMPAT */
+	
+        rIwReqInfo.cmd = (__u16) i4Cmd;
+        rIwReqInfo.flags = 0;
 	switch (i4Cmd) {
 	case IOCTL_SET_INT:
 		/* NOTE(Kevin): 1/3 INT Type <= IFNAMSIZ, so we don't need copy_from/to_user() */
-		return priv_set_int(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
-
+#ifdef CONFIG_COMPAT
+		err= priv_set_int(prNetDev, &rIwReqInfo, &(wrq_data), (char *)&(wrq_data));
+#else
+		err= priv_set_int(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
+#endif
+		break;
 	case IOCTL_GET_INT:
 		/* NOTE(Kevin): 1/3 INT Type <= IFNAMSIZ, so we don't need copy_from/to_user() */
-		return priv_get_int(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
-
+#ifdef CONFIG_COMPAT
+		err = priv_get_int(prNetDev, &rIwReqInfo, &wrq_data, (char *)&(wrq_data));
+#else
+		err = priv_get_int(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
+#endif
+		break;
 	case IOCTL_SET_STRUCT:
 	case IOCTL_SET_STRUCT_FOR_EM:
-		return priv_set_struct(prNetDev, &rIwReqInfo, &prIwReq->u, (char *)&(prIwReq->u));
-
+#ifdef CONFIG_COMPAT
+		err = priv_set_struct(prNetDev, &rIwReqInfo, &wrq_data, (char *)&(wrq_data));
+#else
+		err = priv_set_struct(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
+#endif
+		break;
 	case IOCTL_GET_STRUCT:
-		return priv_get_struct(prNetDev, &rIwReqInfo, &prIwReq->u, (char *)&(prIwReq->u));
-
+#ifdef CONFIG_COMPAT
+		err = priv_get_struct(prNetDev, &rIwReqInfo, &wrq_data, (char *)&(wrq_data));
+#else
+		err = priv_get_struct(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
+#endif
+		break;
 #if (CFG_SUPPORT_QA_TOOL)
 	case IOCTL_QA_TOOL_DAEMON:
-		return priv_qa_agent(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
+#ifdef CONFIG_COMPAT
+		err = priv_qa_agent(prNetDev, &rIwReqInfo, &wrq_data, (char *)&(wrq_data));
+#else
+		err = priv_qa_agent(prNetDev, &rIwReqInfo, &(prIwReq->u), (char *)&(prIwReq->u));
 #endif
+#endif
+		break;
 
 	case IOCTL_GET_STR:
 
 	default:
 		return -EOPNOTSUPP;
 
-	}			/* end of switch */
-
+	}		/* end of switch */
+#ifdef CONFIG_COMPAT 
+               iwp_compat->pointer = ptr_to_compat(wrq_data.data.pointer);
+               iwp_compat->length = wrq_data.data.length;
+               iwp_compat->flags = wrq_data.data.flags;
+#endif
+	return err;
 }				/* priv_support_ioctl */
 
 #if CFG_SUPPORT_BATCH_SCAN
