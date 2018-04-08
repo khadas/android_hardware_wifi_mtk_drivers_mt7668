@@ -82,7 +82,13 @@
 #if CFG_ENABLE_WIFI_DIRECT
 #include "gl_p2p_os.h"
 #endif
-
+#ifdef CONFIG_COMPAT
+typedef struct _compat_android_wifi_priv_cmd {
+    compat_caddr_t buf;
+    int used_len;
+    int total_len;
+} compat_android_wifi_priv_cmd;
+#endif /* CONFIG_COMPAT */
 /*
 * #if CFG_SUPPORT_QA_TOOL
 * extern UINT_16 g_u2DumpIndex;
@@ -2433,7 +2439,7 @@ typedef struct cmd_tlv {
 } cmd_tlv_t;
 
 typedef struct priv_driver_cmd_s {
-	char buf[PRIV_CMD_SIZE];
+	char *buf;
 	int used_len;
 	int total_len;
 } priv_driver_cmd_t;
@@ -10840,8 +10846,16 @@ INT_32 priv_driver_cmds(IN struct net_device *prNetDev, IN PCHAR pcCommand, IN I
 		} else if (strnicmp(pcCommand, CMD_PNOSSIDCLR_SET, strlen(CMD_PNOSSIDCLR_SET)) == 0) {
 			/* ToDo:: Nothing */
 		} else if (strnicmp(pcCommand, CMD_PNOSETUP_SET, strlen(CMD_PNOSETUP_SET)) == 0) {
+		} else if (strnicmp(pcCommand, CMD_RXFILTER_START, strlen(CMD_RXFILTER_START)) == 0) {
 			/* ToDo:: Nothing */
+		} else if (strnicmp(pcCommand, CMD_RXFILTER_STOP, strlen(CMD_RXFILTER_STOP)) == 0) {
+		} else if (strnicmp(pcCommand, CMD_SET_AP_WPS_P2P_IE, strlen(CMD_SET_AP_WPS_P2P_IE)) == 0) {
+                        /* ToDo:: Nothing */
+		} else if (strnicmp(pcCommand, CMD_RXFILTER_ADD, strlen(CMD_RXFILTER_ADD)) == 0) {
+                        /* ToDo:: Nothing */
 		} else if (strnicmp(pcCommand, CMD_PNOENABLE_SET, strlen(CMD_PNOENABLE_SET)) == 0) {
+
+		} else if (strnicmp(pcCommand, CMD_BTCOEXSCAN_STOP, strlen(CMD_BTCOEXSCAN_STOP)) == 0) {
 			/* ToDo:: Nothing */
 		} else if (strnicmp(pcCommand, CMD_SETSUSPENDOPT, strlen(CMD_SETSUSPENDOPT)) == 0) {
 			/* i4BytesWritten = wl_android_set_suspendopt(net, pcCommand, i4TotalLen); */
@@ -11214,12 +11228,24 @@ int android_private_support_driver_cmd(IN struct net_device *prNetDev,
 	struct android_wifi_priv_cmd priv_cmd;
 	char *command = NULL;
 	int ret = 0, bytes_written = 0;
-
+#ifdef CONFIG_COMPAT
+        compat_android_wifi_priv_cmd compat_priv_cmd;
+#endif
 	if (!prReq->ifr_data)
 		return -EINVAL;
+#ifdef CONFIG_COMPAT
+        if (copy_from_user(&compat_priv_cmd, prReq->ifr_data,
+                sizeof(compat_android_wifi_priv_cmd))) {
+                return -EFAULT;
 
+        }
+        priv_cmd.buf = compat_ptr(compat_priv_cmd.buf);
+        priv_cmd.used_len = compat_priv_cmd.used_len;
+        priv_cmd.total_len = compat_priv_cmd.total_len;
+#else
 	if (copy_from_user(&priv_cmd, prReq->ifr_data, sizeof(priv_cmd)))
 		return -EFAULT;
+#endif
 
 	command = kzalloc(priv_cmd.total_len, GFP_KERNEL);
 	if (!command) {
@@ -11231,7 +11257,7 @@ int android_private_support_driver_cmd(IN struct net_device *prNetDev,
 		ret = -EFAULT;
 		goto FREE;
 	}
-
+	DBGLOG(REQ, INFO, "%s: driver cmd \"%s\" on %s\n", __func__, command, prReq->ifr_name);
 	bytes_written = priv_driver_cmds(prNetDev, command, priv_cmd.total_len);
 
 	if (bytes_written == -EOPNOTSUPP) {
