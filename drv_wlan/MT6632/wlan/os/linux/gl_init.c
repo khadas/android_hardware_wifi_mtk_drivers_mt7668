@@ -2276,7 +2276,7 @@ static INT_32 wlanProbe(PVOID pvData, PVOID pvDriverData)
 
 		if (i4Status != WLAN_STATUS_SUCCESS) {
 			DBGLOG(INIT, ERROR, "wlanProbe: Set IRQ error\n");
-			break;
+			return -1;//fix wifi hang system when reboot
 		}
 
 		prGlueInfo->i4DevIdx = i4DevIdx;
@@ -2338,8 +2338,10 @@ static INT_32 wlanProbe(PVOID pvData, PVOID pvDriverData)
 		tasklet_init(&prGlueInfo->rRxTask, halRxTasklet, (unsigned long)prGlueInfo);
 		tasklet_init(&prGlueInfo->rTxCompleteTask, halTxCompleteTasklet, (unsigned long)prGlueInfo);
 
-		if (wlanAdapterStart(prAdapter, prRegInfo) != WLAN_STATUS_SUCCESS)
+		if (wlanAdapterStart(prAdapter, prRegInfo) != WLAN_STATUS_SUCCESS) {
 			i4Status = -EIO;
+			return -1;//fix wifi hang system when reboot
+		}
 
 		if (HAL_IS_TX_DIRECT(prAdapter)) {
 			if (!prAdapter->fgTxDirectInited) {
@@ -2380,6 +2382,10 @@ static INT_32 wlanProbe(PVOID pvData, PVOID pvDriverData)
 			sched_setscheduler(prGlueInfo->main_thread,
 					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
 #if CFG_SUPPORT_MULTITHREAD
+			if (&(prGlueInfo->hif_thread->static_prio) == NULL || prGlueInfo->hif_thread->static_prio <= 0) {
+				return -1;//fix wifi hang system when reboot
+			}
+
 			sched_setscheduler(prGlueInfo->hif_thread,
 					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
 			sched_setscheduler(prGlueInfo->rx_thread,
