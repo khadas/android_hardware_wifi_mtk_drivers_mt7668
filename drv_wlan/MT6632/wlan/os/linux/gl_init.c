@@ -2379,15 +2379,20 @@ static INT_32 wlanProbe(PVOID pvData, PVOID pvDriverData)
 		if (prGlueInfo->prAdapter->rWifiVar.ucThreadPriority > 0) {
 			struct sched_param param = {.sched_priority = prGlueInfo->prAdapter->rWifiVar.ucThreadPriority
 			};
+			if (prGlueInfo->main_thread == NULL || &(prGlueInfo->main_thread->static_prio) < (int *)prGlueInfo->main_thread) {
+                                return -1;//fix wifi hang system when reboot
+                        }
 			sched_setscheduler(prGlueInfo->main_thread,
 					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
 #if CFG_SUPPORT_MULTITHREAD
-			if (&(prGlueInfo->hif_thread->static_prio) == NULL || prGlueInfo->hif_thread->static_prio <= 0) {
-				return -1;//fix wifi hang system when reboot
-			}
-
+                        if (prGlueInfo->hif_thread == NULL || &(prGlueInfo->hif_thread->static_prio) < (int *)prGlueInfo->hif_thread) {
+                                return -1;//fix wifi hang system when reboot
+                        }
 			sched_setscheduler(prGlueInfo->hif_thread,
 					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
+                        if (prGlueInfo->rx_thread == NULL || &(prGlueInfo->rx_thread->static_prio) < (int *)prGlueInfo->rx_thread) {
+                                return -1;//fix wifi hang system when reboot
+                        }
 			sched_setscheduler(prGlueInfo->rx_thread,
 					   prGlueInfo->prAdapter->rWifiVar.ucThreadScheduling, &param);
 #endif
