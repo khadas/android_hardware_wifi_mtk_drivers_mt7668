@@ -839,8 +839,8 @@ int mtk_cfg80211_vendor_set_country_code(struct wiphy *wiphy, struct wireless_de
 	if (attr->nla_type != WIFI_ATTRIBUTE_COUNTRY_CODE)
 		return -EINVAL;
 
-		country[0] = *((PUINT_8)nla_data(attr));
-		country[1] = *((PUINT_8)nla_data(attr) + 1);
+	country[0] = *((PUINT_8)nla_data(attr));
+	country[1] = *((PUINT_8)nla_data(attr) + 1);
 
 	DBGLOG(REQ, INFO, "Set country code: %c%c\n", country[0], country[1]);
 
