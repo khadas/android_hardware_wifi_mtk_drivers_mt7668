@@ -2194,11 +2194,21 @@ BOOLEAN halIsTxResourceControlEn(IN P_ADAPTER_T prAdapter)
 
 VOID halTxResourceResetHwTQCounter(IN P_ADAPTER_T prAdapter)
 {
-	UINT_32 u4WHISR = 0;
-	UINT_16 au2TxCount[16];
+        PUINT_32 pu4WHISR = NULL;
+        UINT_16 au2TxCount[16];
 
-	HAL_READ_INTR_STATUS(prAdapter, 4, (PUINT_8)&u4WHISR);
-	if (HAL_IS_TX_DONE_INTR(u4WHISR))
-		HAL_READ_TX_RELEASED_COUNT(prAdapter, au2TxCount);
+        pu4WHISR = (PUINT_32)kalMemAlloc(sizeof(UINT_32), PHY_MEM_TYPE);
+        if (!pu4WHISR) {
+                DBGLOG(INIT, ERROR, "Allocate pu4WHISR fail\n");
+                return;
+        }
+
+        HAL_READ_INTR_STATUS(prAdapter, sizeof(UINT_32), (PUINT_8)pu4WHISR);
+        if (HAL_IS_TX_DONE_INTR(*pu4WHISR))
+                HAL_READ_TX_RELEASED_COUNT(prAdapter, au2TxCount);
+
+        if (pu4WHISR)
+                kalMemFree(pu4WHISR, PHY_MEM_TYPE, sizeof(UINT_32));
 }
+
 
